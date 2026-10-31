@@ -40,11 +40,13 @@ const (
 	EvPasswordReset        = "password.reset"
 	EvPasskeyAdd           = "passkey.add"
 	EvPasskeyRemove        = "passkey.remove"
+	EvAvatarSet            = "avatar.set"
+	EvAvatarRemove         = "avatar.remove"
 )
 
 // EventGroups are the filters offered in the admin log.
 var EventGroups = map[string][]string{
-	"signin":   {EvLoginSuccess, EvLoginFailure, EvRegister, EvLogout, EvPasswordChange, EvSessionRevoke, EvEmailVerify, EvPasswordResetRequest, EvPasswordReset, EvPasskeyAdd, EvPasskeyRemove},
+	"signin":   {EvLoginSuccess, EvLoginFailure, EvRegister, EvLogout, EvPasswordChange, EvSessionRevoke, EvEmailVerify, EvPasswordResetRequest, EvPasswordReset, EvPasskeyAdd, EvPasskeyRemove, EvAvatarSet, EvAvatarRemove},
 	"apps":     {EvAppSignIn, EvAppDenied, EvGrantRevoke},
 	"admin":    {EvUserCreate, EvUserUpdate, EvUserSignout, EvAppCreate, EvAppUpdate, EvAppDelete, EvAppSecret, EvKeyRotate, EvKeyRetire, EvMailAssign, EvMailUnassign, EvTotpCreate, EvTotpUpdate, EvTotpDelete, EvTotpAssign},
 	"security": {EvTokenReuse, EvLoginFailure, EvAppDenied},

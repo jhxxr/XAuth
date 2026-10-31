@@ -93,6 +93,8 @@ const eventTypeLabels: Record<string, string> = {
   "totp.update": "修改验证器",
   "totp.delete": "删除验证器",
   "totp.assign": "分配验证器",
+  "avatar.set": "更新头像",
+  "avatar.remove": "移除头像",
 };
 
 const shortTime = new Intl.DateTimeFormat("zh-CN", {
@@ -150,7 +152,15 @@ function SovereignDossierHero({
 
             <div className="relative flex items-center justify-between gap-4">
               <div className="flex min-w-0 items-center gap-4 sm:gap-5">
-                <Rosette seed={s} mark={mark} className="size-16 sm:size-[4.5rem]" />
+                {user.avatarUrl ? (
+                  <img
+                    src={user.avatarUrl}
+                    alt=""
+                    className="size-16 shrink-0 rounded-full border border-line object-cover ring-4 ring-white/70 sm:size-[4.5rem]"
+                  />
+                ) : (
+                  <Rosette seed={s} mark={mark} className="size-16 sm:size-[4.5rem]" />
+                )}
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="eyebrow !text-stamp">IDENTITY CREDENTIAL · 身份通行证</span>

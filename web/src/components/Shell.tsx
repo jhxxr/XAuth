@@ -163,7 +163,7 @@ function Sidebar({
       {user && (
         <div className={`shrink-0 border-t border-line p-3 ${collapsed ? "flex flex-col items-center gap-1" : ""}`}>
           <div className={`flex items-center gap-2.5 rounded-xl p-2 ${collapsed ? "flex-col" : ""}`}>
-            <Avatar text={displayName(user)} />
+            <Avatar text={displayName(user)} src={user.avatarUrl} />
             {!collapsed && (
               <div className="min-w-0 flex-1 leading-tight">
                 <p className="truncate text-[0.8125rem] font-medium">{displayName(user)}</p>

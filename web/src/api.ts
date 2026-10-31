@@ -5,6 +5,8 @@ export type User = {
   id: string;
   email: string;
   name: string;
+  /** Cache-busting URL of the user's picture, or null when they have none. */
+  avatarUrl: string | null;
   emailVerified: boolean;
   isAdmin: boolean;
   disabled: boolean;
@@ -91,6 +93,8 @@ export const api = {
     request<SignInResult>("POST", "/api/register", { email, password, name, flow: flow ?? "" }),
   logout: () => request<{ ok: boolean }>("POST", "/api/logout"),
   updateAccount: (name: string) => request<{ user: User }>("PATCH", "/api/account", { name }),
+  setAvatar: (image: string) => request<{ user: User }>("PUT", "/api/account/avatar", { image }),
+  removeAvatar: () => request<{ user: User }>("DELETE", "/api/account/avatar"),
   changePassword: (current: string, next: string) =>
     request<{ ok: boolean }>("POST", "/api/account/password", { current, new: next }),
   requestVerifyEmail: () => request<{ ok: boolean }>("POST", "/api/account/verify-email"),

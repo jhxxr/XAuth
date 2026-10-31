@@ -46,7 +46,7 @@ export function ContinueCard({ user, appName, busy, onContinue, onSwitch }: Cont
   return (
     <div>
       <div className="flex items-center gap-3 rounded-xl border border-line bg-white p-3 shadow-xs">
-        <Avatar text={displayName(user)} size="lg" />
+        <Avatar text={displayName(user)} src={user.avatarUrl} size="lg" />
         <div className="min-w-0">
           <p className="truncate font-semibold">{displayName(user)}</p>
           <p className="truncate text-sm text-ink-soft">{user.email}</p>

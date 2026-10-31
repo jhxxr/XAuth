@@ -71,7 +71,7 @@ export function AdminTotpPage() {
                     <span className="flex -space-x-1.5">
                       {assigned.slice(0, 4).map((u) => (
                         <span key={u.id} className="rounded-full ring-2 ring-[#f1f2ee]">
-                          <Avatar text={u.name || u.email} size="sm" tone="plain" />
+                          <Avatar text={u.name || u.email} src={u.avatarUrl} size="sm" tone="plain" />
                         </span>
                       ))}
                     </span>

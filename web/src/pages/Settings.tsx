@@ -1,13 +1,138 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { api, errorMessage, type DeviceSession, type Grant, type Passkey } from "../api";
+import { useEffect, useRef, useState, type DragEvent, type FormEvent } from "react";
+import { ApiError, api, errorMessage, type DeviceSession, type Grant, type Passkey, type User } from "../api";
+import {
+  AVATAR_ACCEPT,
+  MAX_AVATAR_BYTES,
+  MAX_SOURCE_BYTES,
+  checkAvatarFile,
+  formatBytes,
+  prepareAvatar,
+} from "../avatar";
 import { useToast } from "../components/Dialog";
 import { Icon } from "../components/Icon";
 import { AppShell } from "../components/Shell";
 import { Badge, Button, Empty, Field, ListRow, Notice, Section } from "../components/ui";
-import { formatDate, useSession } from "../session";
+import { displayName, formatDate, useSession } from "../session";
 import { createPasskey, defaultPasskeyName, supportsPasskeys } from "../webauthn";
 
-function ProfileForm({ user }: { user: { name: string; email: string } }) {
+function AvatarEditor({ user }: { user: User }) {
+  const { setUser } = useSession();
+  const toast = useToast();
+  const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  /** Optimistic preview while the upload is in flight. */
+  const [preview, setPreview] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  const upload = async (file: File | undefined) => {
+    if (!file || busy) return;
+    setError("");
+    const problem = checkAvatarFile(file);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    setBusy(true);
+    try {
+      const image = await prepareAvatar(file);
+      setPreview(image);
+      const r = await api.setAvatar(image);
+      setUser(r.user);
+      setPreview(null);
+      toast("头像已更新");
+    } catch (err) {
+      setPreview(null);
+      setError(err instanceof ApiError ? errorMessage(err) : err instanceof Error ? err.message : "无法处理这张图片。");
+    } finally {
+      setBusy(false);
+      if (input.current) input.current.value = "";
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const r = await api.removeAvatar();
+      setUser(r.user);
+      setPreview(null);
+      toast("头像已移除");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const drop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragging(false);
+    void upload(e.dataTransfer.files?.[0]);
+  };
+  const shown = preview ?? user.avatarUrl;
+
+  return (
+    <div>
+      <p className="mb-2 block text-[0.8125rem] font-medium text-ink">头像</p>
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={(e) => {
+          // Moving over a child fires dragleave on the parent too.
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+        }}
+        onDrop={drop}
+        className={`flex flex-wrap items-center gap-4 rounded-xl border border-dashed p-3.5 transition-colors ${
+          dragging ? "border-stamp bg-stamp/[0.05]" : "border-line-strong bg-white/60"
+        }`}
+      >
+        <span className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-full border border-line bg-desk">
+          {shown ? (
+            <img src={shown} alt="当前头像" className="size-full object-cover" />
+          ) : (
+            <span className="display text-[1.125rem] text-ink-soft">{displayName(user).slice(0, 1).toUpperCase()}</span>
+          )}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[0.8125rem] leading-5 text-ink-soft">
+            拖入图片或点右侧按钮选择。支持 PNG、JPEG、WebP 和 GIF，原图不超过 {formatBytes(MAX_SOURCE_BYTES)}。
+          </p>
+          <p className="mt-0.5 text-[0.75rem] leading-5 text-ink-faint">
+            上传后会自动裁成方形并压缩，保存的头像不超过 {formatBytes(MAX_AVATAR_BYTES)}。
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {shown && (
+            <Button variant="ghost" size="sm" className="hover:text-void" busy={busy && !preview} disabled={busy} onClick={remove}>
+              移除
+            </Button>
+          )}
+          <Button variant="secondary" size="sm" busy={busy} onClick={() => input.current?.click()}>
+            {busy ? "处理中" : shown ? "更换图片" : "上传图片"}
+          </Button>
+        </div>
+        <input
+          ref={input}
+          type="file"
+          accept={AVATAR_ACCEPT}
+          className="sr-only"
+          aria-label="选择头像图片"
+          onChange={(e) => void upload(e.target.files?.[0])}
+        />
+      </div>
+      {error && (
+        <div className="mt-2">
+          <Notice>{error}</Notice>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProfileForm({ user }: { user: User }) {
   const { setUser } = useSession();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -32,7 +157,7 @@ function ProfileForm({ user }: { user: { name: string; email: string } }) {
     <Section
       icon="user"
       title="个人资料"
-      description="登录其他应用时，它们会看到这个名称。"
+      description="这里设置你在 XAuth 各页面显示的名称和头像。"
       onSubmit={submit}
       footer={
         <>
@@ -45,6 +170,7 @@ function ProfileForm({ user }: { user: { name: string; email: string } }) {
     >
       <div className="space-y-4">
         {error && <Notice>{error}</Notice>}
+        <AvatarEditor user={user} />
         <Field label="名称" name="name" defaultValue={user.name} maxLength={64} autoComplete="name" placeholder={user.email} className="max-w-md" />
       </div>
     </Section>

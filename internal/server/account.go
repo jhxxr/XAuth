@@ -13,6 +13,7 @@ type userJSON struct {
 	ID            string     `json:"id"`
 	Email         string     `json:"email"`
 	Name          string     `json:"name"`
+	AvatarURL     *string    `json:"avatarUrl"`
 	EmailVerified bool       `json:"emailVerified"`
 	IsAdmin       bool       `json:"isAdmin"`
 	Disabled      bool       `json:"disabled"`
@@ -24,6 +25,9 @@ func toUserJSON(u *store.User) *userJSON {
 	out := &userJSON{
 		ID: u.ID, Email: u.Email, Name: u.Name, EmailVerified: u.EmailVerified,
 		IsAdmin: u.IsAdmin, Disabled: u.Disabled, CreatedAt: u.CreatedAt,
+	}
+	if v := avatarURL(u); v != "" {
+		out.AvatarURL = &v
 	}
 	if !u.LastLoginAt.IsZero() {
 		t := u.LastLoginAt

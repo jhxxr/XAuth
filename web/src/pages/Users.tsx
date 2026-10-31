@@ -62,7 +62,7 @@ export function UsersPage() {
                 <tr key={u.id}>
                   <td>
                     <div className="flex items-center gap-3">
-                      <Avatar text={u.name || u.email} tone={u.isAdmin ? "ink" : "plain"} />
+                      <Avatar text={u.name || u.email} src={u.avatarUrl} tone={u.isAdmin ? "ink" : "plain"} />
                       <div className="min-w-0">
                         <p className="truncate font-medium">{u.name || u.email}</p>
                         {u.name && <p className="truncate text-[0.8125rem] text-ink-soft">{u.email}</p>}

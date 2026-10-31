@@ -218,4 +218,17 @@ CREATE TABLE webauthn_challenges (
 	expires_at INTEGER NOT NULL
 );
 `,
+	// Phase 6: user avatars. The bytes live in their own table so loading a
+	// user never drags a picture along; users.avatar_updated_at is only the
+	// cache version (and tells the UI whether there is one).
+	`
+ALTER TABLE users ADD COLUMN avatar_updated_at INTEGER;
+
+CREATE TABLE user_avatars (
+	user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+	mime       TEXT NOT NULL,
+	data       BLOB NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+`,
 }

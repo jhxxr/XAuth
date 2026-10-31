@@ -288,13 +288,27 @@ export function Section({ title, description, icon, action, footer, onSubmit, ch
   );
 }
 
-/** A round monogram for a person or an app. */
-export function Avatar({ text, size = "md", tone = "ink" }: { text: string; size?: "sm" | "md" | "lg"; tone?: "ink" | "plain" }) {
-  const s = { sm: "size-7 text-[0.6875rem]", md: "size-8 text-[0.75rem]", lg: "size-10 text-sm" }[size];
+/** A round monogram, or the user's picture when they have one. */
+export function Avatar({
+  text: label,
+  src,
+  size = "md",
+  tone = "ink",
+}: {
+  text: string;
+  src?: string | null;
+  size?: "sm" | "md" | "lg";
+  tone?: "ink" | "plain";
+}) {
+  const box = { sm: "size-7", md: "size-8", lg: "size-10" }[size];
+  if (src) {
+    return <img src={src} alt="" aria-hidden="true" className={`shrink-0 rounded-full border border-line bg-desk object-cover ${box}`} />;
+  }
+  const text = { sm: "text-[0.6875rem]", md: "text-[0.75rem]", lg: "text-sm" }[size];
   const t = tone === "ink" ? "bg-gradient-to-br from-[#2e3a6b] to-ink text-paper" : "border border-line bg-white text-ink-soft";
   return (
-    <span aria-hidden="true" className={`display grid shrink-0 place-items-center rounded-full ${s} ${t}`}>
-      {text.slice(0, 1).toUpperCase()}
+    <span aria-hidden="true" className={`display grid shrink-0 place-items-center rounded-full ${box} ${text} ${t}`}>
+      {label.slice(0, 1).toUpperCase()}
     </span>
   );
 }
@@ -329,7 +343,7 @@ export function RadioCard({ name, checked, onChange, title, description, icon, d
   );
 }
 
-type ChecklistUser = { id: string; name: string; email: string };
+type ChecklistUser = { id: string; name: string; email: string; avatarUrl?: string | null };
 
 /** A scrollable, filterable list of people with checkboxes. */
 export function UserChecklist({ users, selected, onChange }: { users: ChecklistUser[]; selected: string[]; onChange: (ids: string[]) => void }) {
@@ -374,7 +388,7 @@ export function UserChecklist({ users, selected, onChange }: { users: ChecklistU
                 checked={on}
                 onChange={(e) => onChange(e.target.checked ? [...selected, u.id] : selected.filter((id) => id !== u.id))}
               />
-              <Avatar text={u.name || u.email} size="sm" tone="plain" />
+              <Avatar text={u.name || u.email} src={u.avatarUrl} size="sm" tone="plain" />
               <span className="min-w-0 flex-1 leading-tight">
                 <span className="block truncate text-[0.8125rem] font-medium">{u.name || u.email}</span>
                 {u.name && <span className="block truncate text-[0.75rem] text-ink-soft">{u.email}</span>}

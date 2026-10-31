@@ -20,6 +20,9 @@ type User struct {
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	LastLoginAt   time.Time // zero if the user never signed in
+	// AvatarUpdatedAt is when the user last changed their picture; zero
+	// means they have none.
+	AvatarUpdatedAt time.Time
 }
 
 // NormalizeEmail lowercases and trims an email address for storage and lookup.
@@ -29,15 +32,15 @@ func NormalizeEmail(email string) string {
 
 const userCols = "id, email, name, password_hash, email_verified, is_admin, disabled, created_at, updated_at"
 
-// userSelect also reads last_login_at, which inserts leave NULL.
-const userSelect = "SELECT " + userCols + ", last_login_at FROM users"
+// userSelect also reads the columns inserts leave NULL.
+const userSelect = "SELECT " + userCols + ", last_login_at, avatar_updated_at FROM users"
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
 	var verified, admin, disabled int
 	var created, updated int64
-	var lastLogin sql.NullInt64
-	err := row.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &verified, &admin, &disabled, &created, &updated, &lastLogin)
+	var lastLogin, avatar sql.NullInt64
+	err := row.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &verified, &admin, &disabled, &created, &updated, &lastLogin, &avatar)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -48,6 +51,9 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	u.CreatedAt, u.UpdatedAt = fromUnix(created), fromUnix(updated)
 	if lastLogin.Valid {
 		u.LastLoginAt = fromUnix(lastLogin.Int64)
+	}
+	if avatar.Valid {
+		u.AvatarUpdatedAt = fromUnix(avatar.Int64)
 	}
 	return &u, nil
 }
