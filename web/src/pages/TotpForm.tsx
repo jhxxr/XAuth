@@ -39,12 +39,14 @@ export function TotpForm({
     set("input", raw);
     const parsed = parseOtpauth(raw);
     if (!parsed) return;
-    if (parsed.name) set("name", parsed.name);
-    if (parsed.issuer) set("issuer", parsed.issuer);
-    if (parsed.accountName) set("accountName", parsed.accountName);
-    if (parsed.digits) set("digits", parsed.digits);
-    if (parsed.period) set("period", parsed.period);
-    if (parsed.algorithm) set("algorithm", parsed.algorithm);
+    // A scanned entry replaces the previous metadata; omitted otpauth values
+    // fall back to the same defaults the server would use.
+    set("name", parsed.name ?? "");
+    set("issuer", parsed.issuer ?? "");
+    set("accountName", parsed.accountName ?? "");
+    set("digits", parsed.digits ?? 6);
+    set("period", parsed.period ?? 30);
+    set("algorithm", parsed.algorithm ?? "SHA1");
   }, []);
 
   const submit = async (e: FormEvent<HTMLFormElement>) => {
