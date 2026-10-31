@@ -117,7 +117,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # A version tag publishes 1.2.3, 1.2 and 1; "latest" stays on edge.
+            # A version tag publishes 1.2.3, 1.2, 1 and latest (auto).
+            # Main builds only move :edge.
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
