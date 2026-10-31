@@ -1,0 +1,40 @@
+# Go build output
+/bin/
+*.exe
+*.test
+*.out
+coverage.out
+
+# Runtime data: the database holds password hashes, session/token hashes,
+# the token signing key and the OIDC crypto key.
+/data/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Local demo/dev artifacts: demo DB, server log and screenshots
+/.demo/
+*.log
+
+# Web app
+node_modules/
+web/dist/
+internal/webui/dist/*
+!internal/webui/dist/.gitkeep
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Editor / OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*~

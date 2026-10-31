@@ -1,0 +1,22 @@
+.git
+.github
+.gitignore
+bin
+data
+.demo
+*.log
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+.env
+.env.*
+
+# Built locally; the image rebuilds it in its own stage.
+internal/webui/dist
+web/node_modules
+web/dist
+node_modules
+
+*.md
+!README.md

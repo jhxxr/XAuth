@@ -1,0 +1,276 @@
+@import "tailwindcss";
+@import "@fontsource-variable/archivo/wdth.css";
+@import "@fontsource-variable/martian-mono/wdth.css";
+
+/* Palette: security paper. A pass is printed paper on a grey-green desk.
+   Guilloché lines are tints of ink; violet is reserved for the stamp. */
+@theme {
+  --color-desk: #eceee9;
+  --color-paper: #fcfcfa;
+  --color-ink: #1b2340;
+  --color-ink-soft: #565e7a;
+  --color-ink-faint: #8b91a6;
+  --color-line: #dcdfd8;
+  --color-line-strong: #c4c8c0;
+  --color-stamp: #5a3fc0;
+  --color-void: #b3261e;
+  --color-seal: #23704d;
+
+  --font-sans: "Archivo Variable", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+  --font-mono: "Martian Mono Variable", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  --shadow-xs: 0 1px 2px rgb(27 35 64 / 0.06);
+  --shadow-card: 0 1px 2px rgb(27 35 64 / 0.04), 0 4px 14px -6px rgb(27 35 64 / 0.08);
+}
+
+@layer base {
+  html {
+    background: var(--color-desk);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    min-height: 100dvh;
+    /* A faint wash of light from the top of the desk. */
+    background:
+      radial-gradient(1200px 520px at 50% -180px, rgb(255 255 255 / 0.75), transparent 70%),
+      var(--color-desk);
+    background-attachment: fixed;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-stamp);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  ::selection {
+    background: #d9d1f5;
+  }
+  ::placeholder {
+    color: var(--color-ink-faint);
+    opacity: 1;
+  }
+}
+
+@layer components {
+  /* Wide, heavy Latin caps for headers: the engraved look of a document title. */
+  .display {
+    font-stretch: 125%;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+  }
+  /* Small caps-style field labels, as printed on passes. */
+  .eyebrow {
+    font-stretch: 112%;
+    font-size: 0.6875rem;
+    font-weight: 650;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-ink-soft);
+  }
+
+  .pass {
+    position: relative;
+    background: var(--color-paper);
+    border: 1px solid var(--color-line);
+    border-radius: 16px;
+    box-shadow:
+      0 1px 0 #fff inset,
+      0 24px 48px -28px rgb(27 35 64 / 0.38),
+      0 2px 6px -2px rgb(27 35 64 / 0.08);
+  }
+
+  /* Tear line between the pass and its stub. The notches show the desk. */
+  .perforation {
+    position: relative;
+    height: 0;
+    border-top: 1.5px dashed var(--color-line-strong);
+    margin: 0 18px;
+  }
+  .perforation::before,
+  .perforation::after {
+    content: "";
+    position: absolute;
+    top: -11px;
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    background: var(--color-desk);
+    border: 1px solid var(--color-line);
+  }
+  .perforation::before {
+    left: -29px;
+    clip-path: inset(0 0 0 50%);
+  }
+  .perforation::after {
+    right: -29px;
+    clip-path: inset(0 50% 0 0);
+  }
+
+  .field {
+    width: 100%;
+    height: 2.5rem;
+    border: 1px solid var(--color-line-strong);
+    border-radius: 9px;
+    background: #fff;
+    padding: 0 0.8125rem;
+    font-size: 0.9375rem;
+    color: var(--color-ink);
+    box-shadow: var(--shadow-xs);
+    transition: border-color 140ms, box-shadow 140ms;
+  }
+  textarea.field {
+    height: auto;
+    padding: 0.625rem 0.8125rem;
+  }
+  select.field {
+    padding-right: 2rem;
+  }
+  .field:hover {
+    border-color: #a9aea3;
+  }
+  .field:focus {
+    outline: none;
+    border-color: rgb(90 63 192 / 0.6);
+    box-shadow: 0 0 0 3px rgb(90 63 192 / 0.14), var(--shadow-xs);
+  }
+  .field[aria-invalid="true"] {
+    border-color: rgb(179 38 30 / 0.55);
+  }
+  .field:disabled {
+    background: var(--color-desk);
+    color: var(--color-ink-soft);
+    cursor: not-allowed;
+  }
+
+  .panel {
+    background: var(--color-paper);
+    border: 1px solid var(--color-line);
+    border-radius: 14px;
+    box-shadow: var(--shadow-card);
+  }
+
+  /* Data tables inside a .panel. */
+  .data-table {
+    width: 100%;
+    text-align: left;
+    font-size: 0.875rem;
+  }
+  .data-table thead tr {
+    background: rgb(236 238 233 / 0.55);
+    border-bottom: 1px solid var(--color-line);
+  }
+  .data-table th {
+    padding: 0.625rem 1rem;
+    font-stretch: 112%;
+    font-size: 0.6875rem;
+    font-weight: 650;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-ink-soft);
+    white-space: nowrap;
+  }
+  .data-table td {
+    padding: 0.8125rem 1rem;
+    vertical-align: middle;
+  }
+  .data-table tbody tr {
+    border-bottom: 1px solid rgb(220 223 216 / 0.8);
+    transition: background-color 120ms;
+  }
+  .data-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+  .data-table tbody tr:hover {
+    background: rgb(236 238 233 / 0.4);
+  }
+
+  dialog.sheet {
+    margin: auto;
+    width: min(560px, calc(100vw - 2rem));
+    max-height: calc(100dvh - 2rem);
+    border: 1px solid var(--color-line);
+    border-radius: 16px;
+    background: var(--color-paper);
+    color: var(--color-ink);
+    padding: 0;
+    box-shadow: 0 40px 80px -24px rgb(27 35 64 / 0.45), 0 0 0 1px rgb(27 35 64 / 0.03);
+  }
+  dialog.sheet[open] {
+    animation: sheet-in 200ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+  }
+  dialog.sheet::backdrop {
+    background: rgb(27 35 64 / 0.32);
+    backdrop-filter: blur(3px);
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.toast-in {
+  animation: toast-in 220ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+
+/* Signature motion: guilloché lines are engraved once, the stamp lands once. */
+@keyframes engrave {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes stamp {
+  0% {
+    opacity: 0;
+    transform: rotate(-14deg) scale(1.6);
+  }
+  60% {
+    opacity: 1;
+    transform: rotate(-9deg) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: rotate(-10deg) scale(1);
+  }
+}
+.engrave path {
+  stroke-dasharray: 1;
+  animation: engrave 1400ms cubic-bezier(0.3, 0.6, 0.2, 1) both;
+}
+.stamp-in {
+  animation: stamp 420ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .engrave path {
+    animation: none;
+    stroke-dasharray: none;
+  }
+  .stamp-in {
+    animation: none;
+    transform: rotate(-10deg);
+  }
+  dialog.sheet[open],
+  .toast-in {
+    animation: none;
+  }
+}
