@@ -48,7 +48,14 @@ type NavGroup = { label: string; items: NavItem[] };
 function navFor(isAdmin: boolean): NavGroup[] {
   if (isAdmin) {
     return [
-      { label: "个人", items: [{ href: "/account", label: "我的账户", icon: "user" }, { href: "/settings", label: "用户设置", icon: "settings" }] },
+      {
+        label: "个人",
+        items: [
+          { href: "/account", label: "我的账户", icon: "user" },
+          { href: "/settings", label: "用户设置", icon: "settings" },
+          { href: "/totp", label: "验证器", icon: "timer" },
+        ],
+      },
       {
         label: "管理",
         items: [

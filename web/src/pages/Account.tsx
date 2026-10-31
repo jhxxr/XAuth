@@ -381,9 +381,11 @@ function CommandTile({
 /**
  * Live TOTP Vault Widget with countdown progress bar and one-click copy.
  */
-function LiveTotpVault({ entries, isAdmin }: { entries: TotpEntry[] | null; isAdmin: boolean }) {
+function LiveTotpVault({ entries }: { entries: TotpEntry[] | null }) {
   const toast = useToast();
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? entries : entries?.slice(0, 4);
 
   const copy = async (entry: TotpEntry) => {
     if (!entry.code) return;
@@ -410,10 +412,10 @@ function LiveTotpVault({ entries, isAdmin }: { entries: TotpEntry[] | null; isAd
           </div>
         </div>
         <Link
-          href={isAdmin ? "/admin/totp" : "/totp"}
+          href="/totp"
           className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2.5 py-1.5 text-xs font-medium text-ink hover:border-stamp/40 hover:text-stamp"
         >
-          {isAdmin ? "管理共享" : "全部验证器"}
+          全部验证器
           <Icon name="chevron" className="size-3.5" />
         </Link>
       </header>
@@ -425,7 +427,7 @@ function LiveTotpVault({ entries, isAdmin }: { entries: TotpEntry[] | null; isAd
           </Empty>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
-            {entries.slice(0, 4).map((e) => {
+            {visible?.map((e) => {
               const isCopied = copiedId === e.id;
               return (
                 <button
@@ -456,6 +458,17 @@ function LiveTotpVault({ entries, isAdmin }: { entries: TotpEntry[] | null; isAd
           </div>
         )}
       </div>
+      {entries && entries.length > 4 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          className="flex w-full items-center justify-center gap-1.5 border-t border-line bg-desk/20 px-5 py-3 text-xs font-medium text-ink-soft transition-colors hover:bg-desk/40 hover:text-stamp"
+        >
+          <Icon name="chevron" className={`size-3.5 transition-transform ${expanded ? "-rotate-90" : "rotate-90"}`} />
+          {expanded ? "收起" : `展开全部 ${entries.length} 个`}
+        </button>
+      )}
     </section>
   );
 }
@@ -623,7 +636,7 @@ function AdminCommandDeck({
     <div className="grid gap-6 lg:grid-cols-12">
       {/* Left 7 Cols: Live Audit Telemetry + TOTP Vault */}
       <div className="space-y-6 lg:col-span-7">
-        <LiveTotpVault entries={totp} isAdmin />
+        <LiveTotpVault entries={totp} />
 
         <section className="panel overflow-hidden">
           <header className="flex items-center justify-between gap-3 border-b border-line bg-desk/25 px-5 py-4 sm:px-6">
@@ -926,7 +939,7 @@ export function AccountPage() {
           <div className="grid gap-6 lg:grid-cols-12">
             <div className="space-y-6 lg:col-span-7">
               <MailboxRadar configured={mailConfigured} mailboxes={mailboxes} error={mailError} />
-              <LiveTotpVault entries={totp} isAdmin={false} />
+              <LiveTotpVault entries={totp} />
             </div>
             <div className="lg:col-span-5">
               <SecurityTerminals sessions={sessions} onReload={loadPersonal} />
