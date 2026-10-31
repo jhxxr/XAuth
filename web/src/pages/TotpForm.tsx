@@ -1,6 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useCallback, useRef, useState, type FormEvent } from "react";
 import { api, errorMessage, type TotpEntry, type TotpWrite, type User } from "../api";
+import { QrImport } from "../components/QrImport";
 import { Button, Field, GroupLabel, Notice, TextArea, UserChecklist } from "../components/ui";
+import { parseOtpauth } from "../totp";
 
 export type TotpDraft = TotpWrite & { userIds?: string[] };
 
@@ -19,6 +21,31 @@ export function TotpForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [userIds, setUserIds] = useState<string[]>(entry?.userIds ?? []);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // QR import writes straight into the uncontrolled fields; FormData picks the
+  // values up on submit. otpauth parameters also replace the 6/30/SHA1 defaults.
+  const applyDecoded = useCallback((raw: string) => {
+    const form = formRef.current;
+    if (!form) return;
+    const set = (name: string, value: string | number) => {
+      const control = form.elements.namedItem(name);
+      if (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement || control instanceof HTMLSelectElement) {
+        control.value = String(value);
+        control.dispatchEvent(new Event("input", { bubbles: true }));
+        control.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    };
+    set("input", raw);
+    const parsed = parseOtpauth(raw);
+    if (!parsed) return;
+    if (parsed.name) set("name", parsed.name);
+    if (parsed.issuer) set("issuer", parsed.issuer);
+    if (parsed.accountName) set("accountName", parsed.accountName);
+    if (parsed.digits) set("digits", parsed.digits);
+    if (parsed.period) set("period", parsed.period);
+    if (parsed.algorithm) set("algorithm", parsed.algorithm);
+  }, []);
 
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -48,8 +75,9 @@ export function TotpForm({
   };
 
   return (
-    <form onSubmit={submit} className="space-y-5">
+    <form ref={formRef} onSubmit={submit} className="space-y-5">
       {error && <Notice>{error}</Notice>}
+      <QrImport onDecoded={applyDecoded} disabled={busy} />
       <TextArea
         label={entry ? "更换密钥" : "密钥"}
         name="input"

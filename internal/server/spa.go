@@ -9,8 +9,10 @@ import (
 
 // spaCSP applies to the web UI pages only. The library's form_post response
 // needs an inline script, so provider responses do not get this policy.
-const spaCSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
-	"font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
+// blob: lets the QR importer preview local images and run its decoder worker;
+// scanned codes are parsed in the browser and never sent to a third party.
+const spaCSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; " +
+	"font-src 'self'; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
 
 // serveSPA serves built assets and falls back to index.html for app routes.
 func (s *Server) serveSPA(w http.ResponseWriter, r *http.Request) {
