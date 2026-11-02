@@ -22,6 +22,9 @@ const (
 	EvUserCreate           = "admin.user_create"
 	EvUserUpdate           = "admin.user_update"
 	EvUserSignout          = "admin.user_signout"
+	EvInviteCreate         = "admin.invite_create"
+	EvInviteRevoke         = "admin.invite_revoke"
+	EvSettingsUpdate       = "admin.settings_update"
 	EvAppCreate            = "admin.app_create"
 	EvAppUpdate            = "admin.app_update"
 	EvAppDelete            = "admin.app_delete"
@@ -48,7 +51,7 @@ const (
 var EventGroups = map[string][]string{
 	"signin":   {EvLoginSuccess, EvLoginFailure, EvRegister, EvLogout, EvPasswordChange, EvSessionRevoke, EvEmailVerify, EvPasswordResetRequest, EvPasswordReset, EvPasskeyAdd, EvPasskeyRemove, EvAvatarSet, EvAvatarRemove},
 	"apps":     {EvAppSignIn, EvAppDenied, EvGrantRevoke},
-	"admin":    {EvUserCreate, EvUserUpdate, EvUserSignout, EvAppCreate, EvAppUpdate, EvAppDelete, EvAppSecret, EvKeyRotate, EvKeyRetire, EvMailAssign, EvMailUnassign, EvTotpCreate, EvTotpUpdate, EvTotpDelete, EvTotpAssign},
+	"admin":    {EvUserCreate, EvUserUpdate, EvUserSignout, EvInviteCreate, EvInviteRevoke, EvSettingsUpdate, EvAppCreate, EvAppUpdate, EvAppDelete, EvAppSecret, EvKeyRotate, EvKeyRetire, EvMailAssign, EvMailUnassign, EvTotpCreate, EvTotpUpdate, EvTotpDelete, EvTotpAssign},
 	"security": {EvTokenReuse, EvLoginFailure, EvAppDenied},
 	"mail":     {EvMailAssign, EvMailUnassign, EvMailAdminView},
 }

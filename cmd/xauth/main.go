@@ -65,7 +65,8 @@ Environment:
   XAUTH_LISTEN       listen address (default 127.0.0.1:8080)
   XAUTH_DB           SQLite file (default data/xauth.db)
   XAUTH_DEV          allow http:// issuer and SPA redirect URIs (default false)
-  XAUTH_SIGNUP       allow self-service sign-up (default true)
+  XAUTH_SIGNUP       initial registration policy: true opens self-service sign-up,
+                     false starts invite-only (default). Admins can change it later.
   XAUTH_TRUST_PROXY  use X-Real-IP / X-Forwarded-For for rate limits (default false)
   XMAIL_BASE_URL     xmail deployment, e.g. https://mail.example.com (optional)
   XMAIL_API_KEY      xmail API key (sk_live_...); required with XMAIL_BASE_URL

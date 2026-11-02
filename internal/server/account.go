@@ -37,14 +37,20 @@ func toUserJSON(u *store.User) *userJSON {
 }
 
 type sessionJSON struct {
-	User          *userJSON `json:"user"`
-	SignupEnabled bool      `json:"signupEnabled"`
-	Issuer        string    `json:"issuer"`
-	MailEnabled   bool      `json:"mailEnabled"`
+	User              *userJSON `json:"user"`
+	SignupEnabled     bool      `json:"signupEnabled"`
+	RegistrationMode  string    `json:"registrationMode"`
+	InviteVerifyEmail bool      `json:"inviteVerifyEmail"`
+	Issuer            string    `json:"issuer"`
+	MailEnabled       bool      `json:"mailEnabled"`
 }
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
-	resp := sessionJSON{SignupEnabled: s.cfg.SignupEnabled, Issuer: s.cfg.Issuer, MailEnabled: s.cfg.SMTP.Enabled()}
+	reg := s.registration(r.Context())
+	resp := sessionJSON{
+		SignupEnabled: reg.Mode == store.RegistrationOpen, RegistrationMode: reg.Mode,
+		InviteVerifyEmail: reg.InviteVerifyEmail, Issuer: s.cfg.Issuer, MailEnabled: s.cfg.SMTP.Enabled(),
+	}
 	if info := sessionFrom(r.Context()); info != nil {
 		resp.User = toUserJSON(info.user)
 	}
@@ -147,15 +153,24 @@ type registerRequest struct {
 	Password string `json:"password"`
 	Name     string `json:"name"`
 	Flow     string `json:"flow"`
+	Invite   string `json:"invite"`
 }
 
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
-	if !s.cfg.SignupEnabled {
-		writeError(w, http.StatusForbidden, "signup_disabled")
-		return
-	}
 	var req registerRequest
 	if !decode(w, r, &req) {
+		return
+	}
+	reg := s.registration(r.Context())
+	code := store.NormalizeInviteCode(req.Invite)
+	invited := code != ""
+	if invited {
+		if reg.Mode == store.RegistrationClosed {
+			writeError(w, http.StatusForbidden, "signup_disabled")
+			return
+		}
+	} else if reg.Mode != store.RegistrationOpen {
+		writeError(w, http.StatusForbidden, "signup_disabled")
 		return
 	}
 	ip := s.clientIP(r)
@@ -177,6 +192,34 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, passwordError(err))
 		return
 	}
+	var inv *store.Invite
+	if invited {
+		// Count misses as well as hits. A typo must not be able to probe
+		// codes without limit; the signup budget is kept for real attempts.
+		if !s.inviteIP.allowed(ip) {
+			writeError(w, http.StatusTooManyRequests, "rate_limited")
+			return
+		}
+		s.inviteIP.hit(ip)
+		var err error
+		inv, err = s.st.InviteByCode(r.Context(), code)
+		if err != nil {
+			s.writeInviteError(w, err)
+			return
+		}
+		now := s.st.Now()
+		switch {
+		case !inv.RevokedAt.IsZero() || !inv.UsedAt.IsZero():
+			writeError(w, http.StatusGone, "invalid_invite")
+			return
+		case !inv.ExpiresAt.After(now):
+			writeError(w, http.StatusGone, "invite_expired")
+			return
+		case inv.Email != "" && inv.Email != email:
+			writeError(w, http.StatusForbidden, "invite_email_mismatch")
+			return
+		}
+	}
 	s.signupIP.hit(ip)
 	hash, err := password.Hash(req.Password)
 	if err != nil {
@@ -184,7 +227,15 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := &store.User{Email: email, Name: name, PasswordHash: hash}
-	if err := s.st.CreateUser(r.Context(), u); err != nil {
+	if invited {
+		// Only an invite reserved for this exact address vouches for it.
+		// An unbound code must not mark an arbitrary mailbox as verified.
+		u.EmailVerified = inv.Email != "" && inv.Email == email && !reg.InviteVerifyEmail
+		if _, err = s.st.RedeemInvite(r.Context(), code, u); err != nil {
+			s.writeInviteError(w, err)
+			return
+		}
+	} else if err = s.st.CreateUser(r.Context(), u); err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			writeError(w, http.StatusConflict, "email_taken")
 			return
@@ -192,13 +243,40 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	s.audit(r.Context(), store.Event{Type: store.EvRegister, ActorID: u.ID, IP: s.clientIP(r)})
+	detail := map[string]any{}
+	if inv != nil {
+		detail["invite"] = inv.ID
+		if reg.InviteVerifyEmail {
+			detail["verifyEmail"] = true
+		}
+	}
+	s.audit(r.Context(), store.Event{Type: store.EvRegister, ActorID: u.ID, IP: ip, Detail: detail})
 	sess, err := s.startSession(w, r, u.ID)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
+	if invited && reg.InviteVerifyEmail && s.cfg.SMTP.Enabled() {
+		s.sendVerification(r, u)
+	}
 	s.finishSignIn(w, r, http.StatusCreated, u, sess, req.Flow)
+}
+
+// writeInviteError maps invite store errors to API responses.
+func (s *Server) writeInviteError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrInviteInvalid):
+		writeError(w, http.StatusGone, "invalid_invite")
+	case errors.Is(err, store.ErrInviteExpired):
+		writeError(w, http.StatusGone, "invite_expired")
+	case errors.Is(err, store.ErrInviteEmail):
+		writeError(w, http.StatusForbidden, "invite_email_mismatch")
+	case errors.Is(err, store.ErrConflict):
+		writeError(w, http.StatusConflict, "email_taken")
+	default:
+		s.log.Error("register with invite", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal")
+	}
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

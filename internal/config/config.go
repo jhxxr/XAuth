@@ -24,7 +24,9 @@ type Config struct {
 	DBPath string
 	// Dev relaxes issuer and redirect URI checks so http:// works locally.
 	Dev bool
-	// SignupEnabled lets anyone create an account on the login page.
+	// SignupEnabled selects open registration as the initial policy. It is
+	// off by default; admins can switch between closed, invite-only and open
+	// registration in the admin UI (stored in the database).
 	SignupEnabled bool
 	// TrustProxy makes rate limiting use X-Forwarded-For / X-Real-IP.
 	// Enable it only behind a reverse proxy that overwrites those headers.
@@ -52,7 +54,7 @@ func Defaults() Config {
 		Issuer:          "http://localhost:8080",
 		Listen:          "127.0.0.1:8080",
 		DBPath:          "data/xauth.db",
-		SignupEnabled:   true,
+		SignupEnabled:   false,
 		SessionTTL:      14 * 24 * time.Hour,
 		AuthRequestTTL:  30 * time.Minute,
 		AuthCodeTTL:     2 * time.Minute,

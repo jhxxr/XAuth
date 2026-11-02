@@ -64,19 +64,29 @@ func (s *Store) TouchLogin(ctx context.Context, userID string) error {
 	return err
 }
 
-// CreateUser inserts a user. ID, timestamps and email normalisation are filled in.
-func (s *Store) CreateUser(ctx context.Context, u *User) error {
-	now := s.unix()
+// execer is the subset of *sql.DB and *sql.Tx used by insertUser.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// insertUser writes a user row. ID, timestamps and email normalisation are
+// filled in. It is shared by CreateUser and RedeemInvite.
+func insertUser(ctx context.Context, ex execer, u *User, now int64) error {
 	u.ID = NewID()
 	u.Email = NormalizeEmail(u.Email)
 	u.CreatedAt, u.UpdatedAt = fromUnix(now), fromUnix(now)
-	_, err := s.db.ExecContext(ctx,
+	_, err := ex.ExecContext(ctx,
 		"INSERT INTO users ("+userCols+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		u.ID, u.Email, u.Name, u.PasswordHash, boolInt(u.EmailVerified), boolInt(u.IsAdmin), boolInt(u.Disabled), now, now)
 	if isUnique(err) {
 		return ErrConflict
 	}
 	return err
+}
+
+// CreateUser inserts a user. ID, timestamps and email normalisation are filled in.
+func (s *Store) CreateUser(ctx context.Context, u *User) error {
+	return insertUser(ctx, s.db, u, s.unix())
 }
 
 // UserByID loads a user by ID.

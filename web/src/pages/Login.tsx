@@ -95,7 +95,7 @@ export function LoginPage() {
   }
 
   const stamp = mark && <Stamp tone={mark.tone} label={mark.label} detail={clock()} />;
-  const signup = session.signupEnabled ? `/register${flowId ? `?flow=${encodeURIComponent(flowId)}` : ""}` : undefined;
+  const signup = session.registrationMode !== "closed" ? `/register${flowId ? `?flow=${encodeURIComponent(flowId)}` : ""}` : undefined;
 
   return (
     <Centered>

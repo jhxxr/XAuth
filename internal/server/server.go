@@ -32,6 +32,7 @@ type Server struct {
 	loginIP    *limiter
 	loginEmail *limiter
 	signupIP   *limiter
+	inviteIP   *limiter
 	// mail is nil when xmail is not configured.
 	mail    *xmail.Client
 	mailer  mailer.Sender
@@ -50,6 +51,7 @@ func New(cfg config.Config, st *store.Store, p *oidcprovider.Provider, ui fs.FS,
 		loginIP:    newLimiter(30, 15*time.Minute),
 		loginEmail: newLimiter(10, 15*time.Minute),
 		signupIP:   newLimiter(10, time.Hour),
+		inviteIP:   newLimiter(30, 15*time.Minute),
 		resetIP:    newLimiter(5, time.Hour),
 	}
 	if cfg.MailEnabled() {
@@ -84,6 +86,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/session", s.handleSession)
 			r.Post("/login", s.handleLogin)
 			r.Post("/register", s.handleRegister)
+			r.Get("/invite", s.handleInviteInfo)
 			r.Post("/verify", s.handleVerify)
 			r.Post("/forgot-password", s.handleForgotPassword)
 			r.Post("/reset-password", s.handleResetPassword)
@@ -131,6 +134,11 @@ func (s *Server) Handler() http.Handler {
 				r.Post("/users", s.handleCreateUser)
 				r.Patch("/users/{id}", s.handleUpdateUser)
 				r.Post("/users/{id}/signout", s.handleForceSignOut)
+				r.Get("/invites", s.handleAdminListInvites)
+				r.Post("/invites", s.handleAdminCreateInvite)
+				r.Post("/invites/{id}/revoke", s.handleAdminRevokeInvite)
+				r.Get("/settings", s.handleAdminGetSettings)
+				r.Patch("/settings", s.handleAdminUpdateSettings)
 				r.Get("/events", s.handleListEvents)
 				r.Get("/keys", s.handleListKeys)
 				r.Post("/keys", s.handleRotateKey)

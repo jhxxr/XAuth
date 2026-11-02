@@ -3,6 +3,7 @@ import { AppShell, Centered } from "./components/Shell";
 import { EmptyState, Notice } from "./components/ui";
 import { AccountPage } from "./pages/Account";
 import { AppsPage } from "./pages/Apps";
+import { AdminInvitesPage } from "./pages/AdminInvites";
 import { AdminMailPage } from "./pages/AdminMail";
 import { AdminTotpPage } from "./pages/AdminTotp";
 import { EventsPage } from "./pages/Events";
@@ -69,6 +70,7 @@ export function App() {
     case "/totp":
       return <UserTotpPage />;
     case "/admin/users":
+    case "/admin/invites":
     case "/admin/apps":
     case "/admin/mail":
     case "/admin/events":
@@ -82,6 +84,7 @@ export function App() {
         );
       }
       if (path === "/admin/users") return <UsersPage />;
+      if (path === "/admin/invites") return <AdminInvitesPage />;
       if (path === "/admin/apps") return <AppsPage />;
       if (path === "/admin/mail") return <AdminMailPage />;
       if (path === "/admin/events") return <EventsPage />;

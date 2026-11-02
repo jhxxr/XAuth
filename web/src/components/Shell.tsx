@@ -60,6 +60,7 @@ function navFor(isAdmin: boolean): NavGroup[] {
         label: "管理",
         items: [
           { href: "/admin/users", label: "用户", icon: "users" },
+          { href: "/admin/invites", label: "注册与邀请", icon: "mail" },
           { href: "/admin/apps", label: "应用", icon: "apps" },
           { href: "/admin/mail", label: "邮件中台", icon: "inbox" },
           { href: "/admin/totp", label: "共享验证器", icon: "timer" },

@@ -14,7 +14,32 @@ export type User = {
   lastLoginAt: string | null;
 };
 
-export type Session = { user: User | null; signupEnabled: boolean; issuer: string; mailEnabled: boolean };
+export type RegistrationMode = "closed" | "invite" | "open";
+
+export type Session = {
+  user: User | null;
+  signupEnabled: boolean;
+  registrationMode: RegistrationMode;
+  inviteVerifyEmail: boolean;
+  issuer: string;
+  mailEnabled: boolean;
+};
+
+export type Invite = {
+  id: string;
+  email: string;
+  note: string;
+  status: "pending" | "used" | "expired" | "revoked";
+  createdAt: string;
+  expiresAt: string;
+  usedAt: string | null;
+  usedByEmail: string;
+  revokedAt: string | null;
+};
+
+export type InviteInfo = { email: string; expiresAt: string };
+
+export type RegistrationSettings = { mode: RegistrationMode; inviteVerifyEmail: boolean; mailEnabled: boolean };
 
 export type Flow = {
   id: string;
@@ -89,8 +114,10 @@ export const api = {
   session: () => request<Session>("GET", "/api/session"),
   login: (email: string, password: string, flow?: string) =>
     request<SignInResult>("POST", "/api/login", { email, password, flow: flow ?? "" }),
-  register: (email: string, password: string, name: string, flow?: string) =>
-    request<SignInResult>("POST", "/api/register", { email, password, name, flow: flow ?? "" }),
+  register: (email: string, password: string, name: string, flow?: string, invite?: string) =>
+    request<SignInResult>("POST", "/api/register", { email, password, name, flow: flow ?? "", invite: invite ?? "" }),
+  inviteInfo: (code: string) =>
+    request<{ invite: InviteInfo }>("GET", `/api/invite?code=${encodeURIComponent(code)}`),
   logout: () => request<{ ok: boolean }>("POST", "/api/logout"),
   updateAccount: (name: string) => request<{ user: User }>("PATCH", "/api/account", { name }),
   setAvatar: (image: string) => request<{ user: User }>("PUT", "/api/account/avatar", { image }),
@@ -127,6 +154,14 @@ export const api = {
   denyFlow: (id: string) => request<{ redirect: string }>("POST", `/api/flow/${encodeURIComponent(id)}/deny`),
 
   users: () => request<{ users: User[] }>("GET", "/api/admin/users"),
+  invites: () => request<{ invites: Invite[] }>("GET", "/api/admin/invites"),
+  createInvite: (input: { email: string; note: string; expiresInDays: number; sendEmail: boolean }) =>
+    request<{ invite: Invite; code: string; link: string; emailed: boolean }>("POST", "/api/admin/invites", input),
+  revokeInvite: (id: string) => request<{ ok: boolean }>("POST", `/api/admin/invites/${id}/revoke`),
+  registrationSettings: () =>
+    request<{ registration: RegistrationSettings; inviteDefaults: { expiresInDays: number; maxExpiresInDays: number } }>("GET", "/api/admin/settings"),
+  updateRegistrationSettings: (patch: { mode?: RegistrationMode; inviteVerifyEmail?: boolean }) =>
+    request<{ registration: RegistrationSettings }>("PATCH", "/api/admin/settings", patch),
   createUser: (u: { email: string; name: string; password: string; isAdmin: boolean; emailVerified: boolean }) =>
     request<{ user: User }>("POST", "/api/admin/users", u),
   updateUser: (id: string, patch: Partial<Pick<User, "name" | "isAdmin" | "disabled" | "emailVerified">> & { password?: string }) =>

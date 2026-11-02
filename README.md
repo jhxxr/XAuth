@@ -26,7 +26,7 @@ XAUTH_DEV=true ./bin/xauth                         # 本地开发：http://local
 | `XAUTH_LISTEN` | `127.0.0.1:8080` | 监听地址 |
 | `XAUTH_DB` | `data/xauth.db` | SQLite 文件 |
 | `XAUTH_DEV` | `false` | 允许 http 的 issuer 和单页应用回调地址 |
-| `XAUTH_SIGNUP` | `true` | 是否开放自助注册 |
+| `XAUTH_SIGNUP` | `false` | 初始注册策略：`false` 表示仅限邀请，`true` 表示开放自助注册。管理员可随时在后台修改 |
 | `XAUTH_TRUST_PROXY` | `false` | 限流时使用 `X-Real-IP` / `X-Forwarded-For`。只在反向代理会覆盖这些头时开启 |
 | `XMAIL_BASE_URL` | 空 | xmail 部署地址（如 `https://mail.example.com`），不带 `/api/v1`。未配置时邮箱功能关闭 |
 | `XMAIL_API_KEY` | 空 | xmail 的 API Key（`sk_live_...`）。仅保存在服务端环境变量中 |
@@ -38,6 +38,16 @@ XAUTH_DEV=true ./bin/xauth                         # 本地开发：http://local
 | `XAUTH_SMTP_TLS` | `true` | 使用 STARTTLS。只在可信的内网 SMTP 上关闭 |
 
 会话 14 天（活跃时顺延），访问令牌和 ID 令牌 1 小时，刷新令牌 30 天，授权码 2 分钟。这些时长在 `internal/config` 里修改。
+
+## 注册与邀请
+
+默认不开放公开注册。管理员在后台“注册与邀请”页选择注册模式：
+
+- **关闭注册**：只能由管理员在“用户”页创建账户。这段时间邀请码不能兑换；改回邀请模式后，未过期的邀请码仍然有效。
+- **仅限邀请**（默认）：只有持有邀请码的人能注册。邀请码在后台生成，可绑定邮箱、设置有效期（1–90 天，默认 7 天）和留言，也可以直接通过 SMTP 发送邀请邮件。邀请码只存哈希，创建后只显示一次，每个只能使用一次。
+- **开放注册**：登录页的注册入口对所有人开放，不需要邀请码。
+
+绑定了邮箱的邀请码默认不再发送验证邮件，注册后该地址直接标为已确认。未绑定邮箱的邀请码不会自动确认，避免被拿去注册任意地址。若希望被邀请人仍完成邮箱验证，可在后台打开“邀请注册需要邮箱验证”；此时注册后会通过 SMTP 发送验证链接。未配置 SMTP 时该开关不会生效。`XAUTH_SIGNUP` 只决定首次启动时的默认模式，之后以数据库中的设置为准。
 
 ## Docker
 
@@ -79,11 +89,12 @@ Discovery:  https://auth.example.com/.well-known/openid-configuration
 - **Scope**：`openid`、`profile`（`name`、`preferred_username`）、`email`（`email`、`email_verified`）、`offline_access`（刷新令牌，需要应用允许）。用户信息同时写入 ID 令牌和 userinfo。
 - **访问令牌**是 RS256 签名的 JWT，可以用 `/keys` 本地验证。撤销后 userinfo 和 introspection 会立即拒绝，但本地验签的资源服务器要等令牌过期。
 - **退出**：应用调用 `end_session` 并带上 `id_token_hint`，XAuth 会结束浏览器会话并跳回登记过的退出地址。不带 `id_token_hint` 时，用户需要在 XAuth 页面确认退出，且不会跳回应用。
-- `email_verified` 默认是 false。XAuth 目前不发验证邮件，管理员可以手动标记“邮箱已确认”。
+- `email_verified` 取决于注册方式：开放注册、以及未绑定邮箱的邀请注册，默认是 false。绑定了邮箱且未开启“邀请注册需要邮箱验证”时为 true。管理员也可以手动标记“邮箱已确认”。
 - 应用可以限制为所有用户、仅管理员或指定用户。收紧范围后，无权用户已获得的令牌会立即失效。
 - 用户可以在账户页退出其他登录设备，也可以撤销某个应用的登录。
 - 用户可以在“用户设置”里上传头像：支持 PNG、JPEG、WebP、GIF，原图最大 5 MB；浏览器会先裁成方形并压缩到 512px，服务端再按 1 MB 上限校验一次。头像只存进 SQLite，登录用户通过 `/api/users/{id}/avatar` 读取，未登录访问返回 401。
 - 管理员可以在“记录”页查看最近 180 天的操作，在“密钥”页生成新的签名密钥并停用旧密钥。停用后，旧密钥签发的访问令牌立即失效。
+- 管理员可以在“注册与邀请”页切换注册模式（关闭 / 仅限邀请 / 开放）、生成和撤销邀请码，并决定邀请注册是否要求邮箱验证。
 - 管理员可以在“邮箱”页管理 xmail 邮箱、批量创建、设置域名与保留天数、绑定业务服务，并将邮箱分配给指定用户。
 - 用户在账户页“我的邮箱”中查阅分配给自己的邮箱，收信、突出展示验证码、星标并以沙箱隔离形式安全预览富文本内容。未分配时普通用户无法访问，杜绝横向越权。
 - 邮箱分配与解绑、管理员代看审计留痕（`mail.assign`、`mail.unassign`、`mail.admin_view`）；xmail API Key 仅保留在服务端环境变量中，绝不写入数据库、日志或前端包。

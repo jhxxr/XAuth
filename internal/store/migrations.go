@@ -231,4 +231,21 @@ CREATE TABLE user_avatars (
 	updated_at INTEGER NOT NULL
 );
 `,
+	// Phase 7: invite-only registration. Only the hash of a code is stored;
+	// used_by is not a foreign key so the row survives a deleted account.
+	`
+CREATE TABLE invites (
+	id         TEXT PRIMARY KEY,
+	code_hash  TEXT NOT NULL UNIQUE,
+	email      TEXT NOT NULL DEFAULT '',
+	note       TEXT NOT NULL DEFAULT '',
+	created_by TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL,
+	expires_at INTEGER NOT NULL,
+	used_by    TEXT NOT NULL DEFAULT '',
+	used_at    INTEGER,
+	revoked_at INTEGER
+);
+CREATE INDEX invites_created ON invites(created_at DESC);
+`,
 }

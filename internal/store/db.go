@@ -140,6 +140,12 @@ func (s *Store) Purge(ctx context.Context) error {
 			return err
 		}
 	}
+	// Unused invites stay visible to admins for a month after expiry.
+	if _, err := s.db.ExecContext(ctx,
+		"DELETE FROM invites WHERE used_at IS NULL AND expires_at < ?",
+		now-int64((30*24*time.Hour)/time.Second)); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, "DELETE FROM audit_events WHERE at < ?", now-int64(AuditRetention.Seconds()))
 	return err
 }
