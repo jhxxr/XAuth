@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -38,6 +39,18 @@ type Server struct {
 	mailer  mailer.Sender
 	resetIP *limiter
 	views   viewLog
+
+	// mu guards the live SMTP config, the mailer and the xmail client.
+	// The env* fields are the process environment, kept so an admin can
+	// hand control back to them.
+	mu          sync.RWMutex
+	envSMTP     config.SMTPConfig
+	smtpFromDB  bool
+	envXMailURL string
+	envXMailKey string
+	xmailBase   string
+	xmailKey    string
+	xmailFromDB bool
 }
 
 // New builds a server. ui is the built web app (may be empty in tests).
@@ -54,6 +67,10 @@ func New(cfg config.Config, st *store.Store, p *oidcprovider.Provider, ui fs.FS,
 		inviteIP:   newLimiter(30, 15*time.Minute),
 		resetIP:    newLimiter(5, time.Hour),
 	}
+	s.envXMailURL = cfg.XMailBaseURL
+	s.envXMailKey = cfg.XMailAPIKey.Reveal()
+	s.xmailBase = cfg.XMailBaseURL
+	s.xmailKey = cfg.XMailAPIKey.Reveal()
 	if cfg.MailEnabled() {
 		c, err := xmail.New(cfg.XMailBaseURL, cfg.XMailAPIKey.Reveal())
 		if err != nil {
@@ -62,13 +79,20 @@ func New(cfg config.Config, st *store.Store, p *oidcprovider.Provider, ui fs.FS,
 			s.mail = c
 		}
 	}
+	s.envSMTP = cfg.SMTP
 	s.mailer = mailer.New(cfg.SMTP)
+	s.loadStoredSMTP(context.Background())
+	s.loadStoredXMail(context.Background())
 	return s
 }
 
-// SetMailer replaces the outbound sender. Tests use it; production always
-// uses the SMTP sender built in New.
-func (s *Server) SetMailer(m mailer.Sender) { s.mailer = m }
+// SetMailer replaces the outbound sender. Tests use it to capture mail;
+// saving SMTP settings in the admin UI builds a new sender from that config.
+func (s *Server) SetMailer(m mailer.Sender) {
+	s.mu.Lock()
+	s.mailer = m
+	s.mu.Unlock()
+}
 
 // Handler returns the root HTTP handler.
 func (s *Server) Handler() http.Handler {

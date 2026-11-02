@@ -1,16 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, errorMessage, type Invite, type RegistrationMode, type RegistrationSettings } from "../api";
+import { api, errorMessage, type Invite } from "../api";
 import { Dialog, useToast } from "../components/Dialog";
 import { AppShell } from "../components/Shell";
 import { Icon } from "../components/Icon";
-import { Badge, Button, Check, Copyable, Field, GroupLabel, Notice, Section, Segmented } from "../components/ui";
+import { Badge, Button, Check, Copyable, Field, GroupLabel, Notice } from "../components/ui";
+import { Link } from "../router";
 import { formatDate } from "../session";
-
-const modes: [RegistrationMode, string][] = [
-  ["closed", "关闭注册"],
-  ["invite", "仅限邀请"],
-  ["open", "开放注册"],
-];
 
 const statusBadge: Record<Invite["status"], { tone: "seal" | "plain" | "void"; label: string }> = {
   pending: { tone: "seal", label: "待使用" },
@@ -23,10 +18,9 @@ type Created = { code: string; link: string; emailed: boolean; email: string; se
 
 export function AdminInvitesPage() {
   const toast = useToast();
-  const [settings, setSettings] = useState<RegistrationSettings | null>(null);
+  const [mailEnabled, setMailEnabled] = useState(false);
   const [invites, setInvites] = useState<Invite[] | null>(null);
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<Created | null>(null);
   const [defaults, setDefaults] = useState({ expiresInDays: 7, maxExpiresInDays: 90 });
@@ -41,28 +35,12 @@ export function AdminInvitesPage() {
     api
       .registrationSettings()
       .then((r) => {
-        setSettings(r.registration);
+        setMailEnabled(r.registration.mailEnabled);
         setDefaults(r.inviteDefaults);
       })
       .catch((e) => setError(errorMessage(e)));
     void loadInvites();
   }, []);
-
-  const save = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!settings) return;
-    setSaving(true);
-    setError("");
-    try {
-      const r = await api.updateRegistrationSettings({ mode: settings.mode, inviteVerifyEmail: settings.inviteVerifyEmail });
-      setSettings(r.registration);
-      toast("注册设置已保存");
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const revoke = async (inv: Invite) => {
     if (!window.confirm("撤销后这个邀请码将无法再使用。")) return;
@@ -79,51 +57,17 @@ export function AdminInvitesPage() {
   return (
     <AppShell
       title="注册与邀请"
-      description="默认不开放自助注册，由管理员发放邀请码。邀请注册默认不要求邮箱验证，可在这里调整。"
+      description="生成邀请码、查看谁用过。谁可以注册、要不要验证邮箱，在系统设置里调整。"
       actions={<Button onClick={() => setCreating(true)}><Icon name="plus" className="size-4" />生成邀请码</Button>}
     >
       {error && <div className="mb-4"><Notice>{error}</Notice></div>}
 
+      <div className="mb-4 text-sm text-ink-soft">
+        <Link href="/admin/settings" className="font-medium text-ink underline decoration-line underline-offset-4 hover:decoration-ink">
+          打开系统设置
+        </Link>
+      </div>
       <div className="space-y-6">
-        <Section
-          title="注册设置"
-          description="决定谁能创建账户，以及邀请注册时是否必须验证邮箱。"
-          icon="settings"
-          onSubmit={save}
-          footer={<Button type="submit" busy={saving}>保存设置</Button>}
-        >
-          {settings ? (
-            <div className="space-y-5">
-              <div>
-                <GroupLabel as="p">新账户来源</GroupLabel>
-                <Segmented label="注册模式" options={modes} value={settings.mode} onChange={(mode) => setSettings({ ...settings, mode })} />
-                <p className="mt-2 text-[0.8125rem] leading-5 text-ink-soft">
-                  {settings.mode === "closed"
-                    ? "任何人都不能自行注册，只有管理员能在用户页创建账户。这段时间邀请码不能兑换；改回邀请模式后，未过期的邀请码仍然有效。"
-                    : settings.mode === "invite"
-                      ? "只有持有邀请码的人可以注册。邀请码在下方生成并发送。"
-                      : "任何人都可以通过登录页的注册入口创建账户，不需要邀请码。"}
-                </p>
-              </div>
-              <div className="rounded-xl border border-line bg-white/70 px-3.5 py-3">
-                <Check
-                  label="邀请注册需要邮箱验证"
-                  description={
-                    !settings.mailEnabled && !settings.inviteVerifyEmail
-                      ? "未配置 SMTP，无法发送验证邮件。配置 XAUTH_SMTP_* 后才能开启。"
-                      : "关闭时，只有绑定了邮箱的邀请码会把该地址直接标为已确认。未绑定邮箱的邀请码不会自动确认。"
-                  }
-                  checked={settings.inviteVerifyEmail}
-                  onChange={(inviteVerifyEmail) => setSettings({ ...settings, inviteVerifyEmail })}
-                  disabled={!settings.mailEnabled && !settings.inviteVerifyEmail}
-                />
-              </div>
-            </div>
-          ) : (
-            <p className="text-sm text-ink-soft">正在加载设置…</p>
-          )}
-        </Section>
-
         <section className="panel overflow-hidden">
           <header className="flex items-start gap-3.5 px-5 pt-5 pb-4 sm:px-6 sm:pt-6">
             <div className="min-w-0 flex-1">
@@ -174,7 +118,7 @@ export function AdminInvitesPage() {
 
       <CreateInviteDialog
         open={creating}
-        mailEnabled={!!settings?.mailEnabled}
+        mailEnabled={mailEnabled}
         defaultDays={defaults.expiresInDays}
         maxDays={defaults.maxExpiresInDays}
         onClose={() => setCreating(false)}

@@ -4,6 +4,7 @@ import { EmptyState, Notice } from "./components/ui";
 import { AccountPage } from "./pages/Account";
 import { AppsPage } from "./pages/Apps";
 import { AdminInvitesPage } from "./pages/AdminInvites";
+import { AdminSystemPage } from "./pages/AdminSystem";
 import { AdminMailPage } from "./pages/AdminMail";
 import { AdminTotpPage } from "./pages/AdminTotp";
 import { EventsPage } from "./pages/Events";
@@ -71,6 +72,7 @@ export function App() {
       return <UserTotpPage />;
     case "/admin/users":
     case "/admin/invites":
+    case "/admin/settings":
     case "/admin/apps":
     case "/admin/mail":
     case "/admin/events":
@@ -85,6 +87,7 @@ export function App() {
       }
       if (path === "/admin/users") return <UsersPage />;
       if (path === "/admin/invites") return <AdminInvitesPage />;
+      if (path === "/admin/settings") return <AdminSystemPage />;
       if (path === "/admin/apps") return <AppsPage />;
       if (path === "/admin/mail") return <AdminMailPage />;
       if (path === "/admin/events") return <EventsPage />;

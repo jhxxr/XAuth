@@ -41,6 +41,31 @@ export type InviteInfo = { email: string; expiresAt: string };
 
 export type RegistrationSettings = { mode: RegistrationMode; inviteVerifyEmail: boolean; mailEnabled: boolean };
 
+export type SMTPSettings = {
+  host: string;
+  port: number;
+  user: string;
+  from: string;
+  tls: boolean;
+  passwordSet: boolean;
+  enabled: boolean;
+  source: "database" | "environment";
+};
+
+export type XMailSettings = {
+  baseUrl: string;
+  keySet: boolean;
+  enabled: boolean;
+  source: "database" | "environment";
+};
+
+export type SystemSettings = {
+  registration: RegistrationSettings;
+  smtp: SMTPSettings;
+  xmail: XMailSettings;
+  inviteDefaults?: { expiresInDays: number; maxExpiresInDays: number };
+};
+
 export type Flow = {
   id: string;
   app: { id: string; name: string };
@@ -159,9 +184,15 @@ export const api = {
     request<{ invite: Invite; code: string; link: string; emailed: boolean }>("POST", "/api/admin/invites", input),
   revokeInvite: (id: string) => request<{ ok: boolean }>("POST", `/api/admin/invites/${id}/revoke`),
   registrationSettings: () =>
-    request<{ registration: RegistrationSettings; inviteDefaults: { expiresInDays: number; maxExpiresInDays: number } }>("GET", "/api/admin/settings"),
+    request<SystemSettings & { inviteDefaults: { expiresInDays: number; maxExpiresInDays: number } }>("GET", "/api/admin/settings"),
   updateRegistrationSettings: (patch: { mode?: RegistrationMode; inviteVerifyEmail?: boolean }) =>
-    request<{ registration: RegistrationSettings }>("PATCH", "/api/admin/settings", patch),
+    request<SystemSettings>("PATCH", "/api/admin/settings", patch),
+  updateSMTP: (smtp: { host: string; port: number; user: string; password: string; clearPassword: boolean; from: string; tls: boolean }) =>
+    request<SystemSettings>("PATCH", "/api/admin/settings", { smtp }),
+  resetSMTP: () => request<SystemSettings>("PATCH", "/api/admin/settings", { resetSmtp: true }),
+  updateXMail: (xmail: { baseUrl: string; apiKey: string; clearKey: boolean }) =>
+    request<SystemSettings>("PATCH", "/api/admin/settings", { xmail }),
+  resetXMail: () => request<SystemSettings>("PATCH", "/api/admin/settings", { resetXmail: true }),
   createUser: (u: { email: string; name: string; password: string; isAdmin: boolean; emailVerified: boolean }) =>
     request<{ user: User }>("POST", "/api/admin/users", u),
   updateUser: (id: string, patch: Partial<Pick<User, "name" | "isAdmin" | "disabled" | "emailVerified">> & { password?: string }) =>

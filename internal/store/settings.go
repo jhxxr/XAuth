@@ -17,6 +17,12 @@ const (
 const (
 	SettingRegistrationMode  = "registration.mode"
 	SettingInviteVerifyEmail = "registration.invite_verify_email"
+	// SettingSMTP is the admin-saved mail server. Absent means "use the
+	// environment"; a present value wins over XAUTH_SMTP_* until it is deleted.
+	SettingSMTP = "smtp"
+	// SettingXMail is the admin-saved xmail address and API key. Absent means
+	// use XMAIL_BASE_URL and XMAIL_API_KEY.
+	SettingXMail = "xmail"
 )
 
 // RegistrationSettings is the account-creation policy chosen in the admin UI.
@@ -52,6 +58,12 @@ func (s *Store) WriteSetting(ctx context.Context, key, value string) error {
 	_, err := s.db.ExecContext(ctx,
 		"INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
 		key, []byte(value))
+	return err
+}
+
+// DeleteSetting removes a text setting so callers fall back to a default.
+func (s *Store) DeleteSetting(ctx context.Context, key string) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM settings WHERE key = ?", key)
 	return err
 }
 

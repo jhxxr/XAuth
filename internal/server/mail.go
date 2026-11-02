@@ -24,7 +24,7 @@ import (
 
 // mailReady writes 503 when xmail is not configured.
 func (s *Server) mailReady(w http.ResponseWriter) bool {
-	if s.mail == nil {
+	if s.xmailClient() == nil {
 		writeError(w, http.StatusServiceUnavailable, "xmail_not_configured")
 		return false
 	}
@@ -100,7 +100,11 @@ type xmDetail struct {
 // fetchMailbox loads a mailbox from xmail. found is false when xmail does
 // not have it or it is in the trash.
 func (s *Server) fetchMailbox(ctx context.Context, addr string) (d *xmDetail, found bool, res *xmail.Result, err error) {
-	res, err = s.mail.Get(ctx, []string{"mailboxes", addr}, nil)
+	c := s.xmailClient()
+	if c == nil {
+		return nil, false, nil, fmt.Errorf("xmail is not configured")
+	}
+	res, err = c.Get(ctx, []string{"mailboxes", addr}, nil)
 	if err != nil {
 		return nil, false, nil, err
 	}
@@ -153,7 +157,7 @@ func (s *Server) handleMailStatus(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireUser(w, r); !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"configured": s.mail != nil})
+	writeJSON(w, http.StatusOK, map[string]bool{"configured": s.xmailClient() != nil})
 }
 
 // requireMailUser is the guard for every user mail route: signed in, then
@@ -347,7 +351,12 @@ func (s *Server) handleMyEmails(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.grantedMailbox(w, r, info, addr); !ok {
 		return
 	}
-	res, err := s.mail.Get(r.Context(), []string{"mailboxes", addr, "emails"}, query)
+	c := s.xmailClient()
+	if c == nil {
+		writeError(w, http.StatusServiceUnavailable, "xmail_not_configured")
+		return
+	}
+	res, err := c.Get(r.Context(), []string{"mailboxes", addr, "emails"}, query)
 	if err != nil || !res.OK() {
 		s.userMailError(w, r, res, err)
 		return
@@ -388,7 +397,12 @@ func (s *Server) handleMyCode(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.grantedMailbox(w, r, info, addr); !ok {
 		return
 	}
-	res, err := s.mail.Get(r.Context(), []string{"mailboxes", addr, "verification-code"},
+	c := s.xmailClient()
+	if c == nil {
+		writeError(w, http.StatusServiceUnavailable, "xmail_not_configured")
+		return
+	}
+	res, err := c.Get(r.Context(), []string{"mailboxes", addr, "verification-code"},
 		url.Values{"seconds": {strconv.Itoa(seconds)}})
 	if err != nil || !res.OK() {
 		s.userMailError(w, r, res, err)
@@ -421,7 +435,12 @@ func (s *Server) grantedEmail(w http.ResponseWriter, r *http.Request, info *sess
 		writeError(w, http.StatusNotFound, "not_found")
 		return nil, false
 	}
-	res, err := s.mail.Get(r.Context(), []string{"emails", id}, nil)
+	c := s.xmailClient()
+	if c == nil {
+		writeError(w, http.StatusServiceUnavailable, "xmail_not_configured")
+		return nil, false
+	}
+	res, err := c.Get(r.Context(), []string{"emails", id}, nil)
 	if err != nil || !res.OK() {
 		s.userMailError(w, r, res, err)
 		return nil, false
@@ -501,7 +520,12 @@ func (s *Server) updateMyEmail(w http.ResponseWriter, r *http.Request, action st
 	if body == nil {
 		body = []byte("{}")
 	}
-	res, err := s.mail.Do(r.Context(), http.MethodPost, []string{"emails", e.ID, action}, nil, body)
+	c := s.xmailClient()
+	if c == nil {
+		writeError(w, http.StatusServiceUnavailable, "xmail_not_configured")
+		return
+	}
+	res, err := c.Do(r.Context(), http.MethodPost, []string{"emails", e.ID, action}, nil, body)
 	if err != nil || !res.OK() {
 		s.userMailError(w, r, res, err)
 		return

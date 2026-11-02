@@ -114,7 +114,12 @@ func (s *Server) handleMailProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	res, err := s.mail.Do(r.Context(), r.Method, segs, query, body)
+	c := s.xmailClient()
+	if c == nil {
+		writeError(w, http.StatusServiceUnavailable, "xmail_not_configured")
+		return
+	}
+	res, err := c.Do(r.Context(), r.Method, segs, query, body)
 	if err != nil || !res.OK() {
 		s.adminMailError(w, r, res, err)
 		return
@@ -153,7 +158,12 @@ func (s *Server) handleAdminMailHTML(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
 	}
-	res, err := s.mail.Get(r.Context(), []string{"emails", id}, nil)
+	c := s.xmailClient()
+	if c == nil {
+		writeError(w, http.StatusServiceUnavailable, "xmail_not_configured")
+		return
+	}
+	res, err := c.Get(r.Context(), []string{"emails", id}, nil)
 	if err != nil || !res.OK() {
 		s.adminMailError(w, r, res, err)
 		return

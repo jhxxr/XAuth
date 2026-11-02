@@ -149,7 +149,7 @@ func (s *Server) handleAdminCreateInvite(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid_expiry")
 		return
 	}
-	if req.SendEmail && email != "" && !s.cfg.SMTP.Enabled() {
+	if req.SendEmail && email != "" && !s.mailEnabled() {
 		writeError(w, http.StatusConflict, "mail_not_configured")
 		return
 	}
@@ -248,21 +248,39 @@ type registrationSettingsJSON struct {
 func (s *Server) handleAdminGetSettings(w http.ResponseWriter, r *http.Request) {
 	reg := s.registration(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
-		"registration": registrationSettingsJSON{
-			Mode: reg.Mode, InviteVerifyEmail: reg.InviteVerifyEmail, MailEnabled: s.cfg.SMTP.Enabled(),
-		},
+		"registration":   s.registrationJSON(reg),
+		"smtp":           s.smtpView(),
+		"xmail":          s.xmailView(),
 		"inviteDefaults": map[string]int{"expiresInDays": defaultInviteDays, "maxExpiresInDays": maxInviteDays},
 	})
 }
 
 type updateSettingsRequest struct {
-	Mode              *string `json:"mode"`
-	InviteVerifyEmail *bool   `json:"inviteVerifyEmail"`
+	Mode              *string      `json:"mode"`
+	InviteVerifyEmail *bool        `json:"inviteVerifyEmail"`
+	SMTP              *smtpUpdate  `json:"smtp"`
+	ResetSMTP         bool         `json:"resetSmtp"`
+	XMail             *xmailUpdate `json:"xmail"`
+	ResetXMail        bool         `json:"resetXmail"`
+}
+
+func (s *Server) registrationJSON(reg store.RegistrationSettings) registrationSettingsJSON {
+	return registrationSettingsJSON{
+		Mode: reg.Mode, InviteVerifyEmail: reg.InviteVerifyEmail, MailEnabled: s.mailEnabled(),
+	}
 }
 
 func (s *Server) handleAdminUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var req updateSettingsRequest
 	if !decode(w, r, &req) {
+		return
+	}
+	if req.ResetSMTP && req.SMTP != nil {
+		writeError(w, http.StatusBadRequest, "invalid_smtp")
+		return
+	}
+	if req.ResetXMail && req.XMail != nil {
+		writeError(w, http.StatusBadRequest, "invalid_xmail_url")
 		return
 	}
 	reg := s.registration(r.Context())
@@ -275,25 +293,90 @@ func (s *Server) handleAdminUpdateSettings(w http.ResponseWriter, r *http.Reques
 		reg.Mode = *req.Mode
 		changed["mode"] = reg.Mode
 	}
-	if req.InviteVerifyEmail != nil {
-		if *req.InviteVerifyEmail && !s.cfg.SMTP.Enabled() && !reg.InviteVerifyEmail {
-			writeError(w, http.StatusConflict, "mail_not_configured")
+	cur, _, _ := s.mailSnapshot()
+	next := cur
+	switch {
+	case req.ResetSMTP:
+		next = s.envSMTP
+	case req.SMTP != nil:
+		var code string
+		next, code = proposeSMTP(cur, *req.SMTP)
+		if code != "" {
+			writeError(w, http.StatusBadRequest, code)
 			return
 		}
+	}
+	nextVerify := reg.InviteVerifyEmail
+	if req.InviteVerifyEmail != nil {
+		nextVerify = *req.InviteVerifyEmail
+	}
+	smtpChanges := req.ResetSMTP || req.SMTP != nil
+	turningVerifyOn := req.InviteVerifyEmail != nil && *req.InviteVerifyEmail && !reg.InviteVerifyEmail
+	disablingMail := smtpChanges && cur.Enabled() && !next.Enabled()
+	if nextVerify && !next.Enabled() && (turningVerifyOn || disablingMail) {
+		writeError(w, http.StatusConflict, "mail_not_configured")
+		return
+	}
+	if req.InviteVerifyEmail != nil {
 		reg.InviteVerifyEmail = *req.InviteVerifyEmail
 		changed["inviteVerifyEmail"] = reg.InviteVerifyEmail
 	}
-	if len(changed) > 0 {
+	var xmailBase, xmailKey string
+	if req.XMail != nil {
+		var code string
+		xmailBase, xmailKey, code = s.proposeXMail(*req.XMail)
+		if code != "" {
+			writeError(w, http.StatusBadRequest, code)
+			return
+		}
+	}
+	switch {
+	case req.ResetSMTP:
+		if err := s.resetSMTP(r.Context()); err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		changed["smtp"] = map[string]any{"source": "environment"}
+	case req.SMTP != nil:
+		if err := s.saveSMTP(r.Context(), next); err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		changed["smtp"] = map[string]any{
+			"host": next.Host, "from": next.From, "tls": next.TLS,
+			"user": next.User != "", "passwordChanged": req.SMTP.Password != "" || req.SMTP.ClearPassword,
+			"source": "database",
+		}
+	}
+	switch {
+	case req.ResetXMail:
+		if err := s.resetXMail(r.Context()); err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		changed["xmail"] = map[string]any{"source": "environment"}
+	case req.XMail != nil:
+		if err := s.saveXMail(r.Context(), xmailBase, xmailKey); err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		changed["xmail"] = map[string]any{
+			"baseUrl": xmailBase, "keyChanged": req.XMail.APIKey != "" || req.XMail.ClearKey, "source": "database",
+		}
+	}
+	if req.Mode != nil || req.InviteVerifyEmail != nil {
 		if err := s.st.SetRegistration(r.Context(), reg); err != nil {
 			s.internalError(w, r, err)
 			return
 		}
+	}
+	if len(changed) > 0 {
 		s.audit(r.Context(), store.Event{Type: store.EvSettingsUpdate, ActorID: sessionFrom(r.Context()).user.ID,
 			IP: s.clientIP(r), Detail: changed})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"registration": registrationSettingsJSON{
-			Mode: reg.Mode, InviteVerifyEmail: reg.InviteVerifyEmail, MailEnabled: s.cfg.SMTP.Enabled(),
-		},
+		"registration": s.registrationJSON(reg),
+		"smtp":         s.smtpView(),
+		"xmail":        s.xmailView(),
 	})
 }

@@ -12,10 +12,11 @@ import (
 
 // sendMail delivers a message. Tests replace s.mailer to capture it.
 func (s *Server) sendMail(to, subject, text string) error {
-	if s.mailer == nil {
+	m := s.currentMailer()
+	if m == nil {
 		return errors.New("mail is not configured")
 	}
-	return s.mailer.Send(mailer.Message{To: to, Subject: subject, Text: text})
+	return m.Send(mailer.Message{To: to, Subject: subject, Text: text})
 }
 
 // verificationURL and resetURL point at the single-page app, which reads the
@@ -72,7 +73,7 @@ func (s *Server) handleRequestVerify(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.cfg.SMTP.Enabled() {
+	if !s.mailEnabled() {
 		writeError(w, http.StatusConflict, "mail_not_configured")
 		return
 	}
@@ -110,7 +111,7 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 // handleForgotPassword always answers the same way, whether or not the
 // account exists, so the endpoint cannot be used to probe for addresses.
 func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
-	if !s.cfg.SMTP.Enabled() {
+	if !s.mailEnabled() {
 		writeError(w, http.StatusConflict, "mail_not_configured")
 		return
 	}

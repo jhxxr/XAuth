@@ -49,7 +49,7 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	reg := s.registration(r.Context())
 	resp := sessionJSON{
 		SignupEnabled: reg.Mode == store.RegistrationOpen, RegistrationMode: reg.Mode,
-		InviteVerifyEmail: reg.InviteVerifyEmail, Issuer: s.cfg.Issuer, MailEnabled: s.cfg.SMTP.Enabled(),
+		InviteVerifyEmail: reg.InviteVerifyEmail, Issuer: s.cfg.Issuer, MailEnabled: s.mailEnabled(),
 	}
 	if info := sessionFrom(r.Context()); info != nil {
 		resp.User = toUserJSON(info.user)
@@ -256,7 +256,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	if invited && reg.InviteVerifyEmail && s.cfg.SMTP.Enabled() {
+	if invited && reg.InviteVerifyEmail && s.mailEnabled() {
 		s.sendVerification(r, u)
 	}
 	s.finishSignIn(w, r, http.StatusCreated, u, sess, req.Flow)
