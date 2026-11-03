@@ -3,13 +3,14 @@ import { api, errorMessage, type AuditEvent } from "../api";
 import { AppShell } from "../components/Shell";
 import { Icon } from "../components/Icon";
 import { Button, Notice, Segmented } from "../components/ui";
+import { eventTypeLabels } from "./AdminOverview";
 
 /** A dot colour per kind of event: failures and replays in red, admin changes in violet. */
 function tone(type: string) {
   if (/failure|denied|reuse/.test(type)) return "bg-void";
-  if (/delete|retire|signout|revoke/.test(type)) return "bg-[#c47a1a]";
+  if (/delete|retire|signout|revoke|unassign|remove/.test(type)) return "bg-[#c47a1a]";
   if (type.startsWith("admin.") || type.startsWith("totp.") || type.startsWith("mail.")) return "bg-stamp";
-  if (/success|signin|register/.test(type)) return "bg-seal";
+  if (/success|signin|register|verify/.test(type)) return "bg-seal";
   return "bg-ink-faint";
 }
 
@@ -17,38 +18,10 @@ const groups = [
   ["", "全部"],
   ["signin", "登录"],
   ["apps", "应用"],
+  ["mail", "邮件"],
   ["admin", "管理"],
   ["security", "安全"],
 ] as const;
-
-const typeLabels: Record<string, string> = {
-  "login.success": "登录成功",
-  "login.failure": "登录失败",
-  "user.register": "注册账户",
-  logout: "退出登录",
-  "password.change": "更改密码",
-  "session.revoke": "退出设备",
-  "app.signin": "登录应用",
-  "app.denied": "拒绝访问应用",
-  "grant.revoke": "撤销应用授权",
-  "token.reuse": "检测到令牌重放",
-  "admin.user_create": "添加用户",
-  "admin.user_update": "修改用户",
-  "admin.user_signout": "强制用户退出",
-  "admin.invite_create": "生成邀请码",
-  "admin.invite_revoke": "撤销邀请码",
-  "admin.settings_update": "修改注册设置",
-  "admin.app_create": "添加应用",
-  "admin.app_update": "修改应用",
-  "admin.app_delete": "删除应用",
-  "admin.app_secret": "重新生成应用密钥",
-  "admin.key_rotate": "生成签名密钥",
-  "admin.key_retire": "停用签名密钥",
-  "totp.create": "添加验证器",
-  "totp.update": "修改验证器",
-  "totp.delete": "删除验证器",
-  "totp.assign": "分配验证器",
-};
 
 const when = new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 
@@ -80,7 +53,7 @@ export function EventsPage() {
                 <td>
                   <span className="inline-flex items-center gap-2 font-medium whitespace-nowrap">
                     <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${tone(e.type)}`} />
-                    {typeLabels[e.type] ?? e.type}
+                    {eventTypeLabels[e.type] ?? e.type}
                   </span>
                 </td>
                 <td className="max-w-[14rem] truncate">{e.actorEmail || <span className="text-ink-faint">—</span>}</td>

@@ -2,8 +2,6 @@ import { useEffect, useState } from "react";
 import {
   api,
   errorMessage,
-  type App,
-  type AuditEvent,
   type DeviceSession,
   type Grant,
   type MyMailbox,
@@ -17,7 +15,7 @@ import { Icon, type IconName } from "../components/Icon";
 import { MailViewer } from "../components/MailViewer";
 import { Stamp } from "../components/Pass";
 import { AppShell } from "../components/Shell";
-import { Badge, Button, Copyable, Empty } from "../components/ui";
+import { Badge, Button, Empty } from "../components/ui";
 import { Link } from "../router";
 import { displayName, formatDate, useSession } from "../session";
 
@@ -60,52 +58,6 @@ function wideMrz(name: string, id: string, role: string): [string, string] {
     pad(`${digits.slice(0, 16)}${check}<<OIDC<1<0<<PKCE<S256<<SOVEREIGN<PASS`),
   ];
 }
-
-function eventDotTone(type: string) {
-  if (/failure|denied|reuse/.test(type)) return "bg-void ring-4 ring-void/15";
-  if (/delete|retire|signout|revoke/.test(type)) return "bg-[#c47a1a] ring-4 ring-[#c47a1a]/15";
-  if (type.startsWith("admin.") || type.startsWith("totp.") || type.startsWith("mail.")) return "bg-stamp ring-4 ring-stamp/15";
-  if (/success|signin|register/.test(type)) return "bg-seal ring-4 ring-seal/15";
-  return "bg-ink-faint ring-4 ring-ink/10";
-}
-
-const eventTypeLabels: Record<string, string> = {
-  "login.success": "登录成功",
-  "login.failure": "登录失败",
-  "user.register": "注册账户",
-  logout: "退出登录",
-  "password.change": "更改密码",
-  "session.revoke": "退出设备",
-  "app.signin": "登录应用",
-  "app.denied": "拒绝访问应用",
-  "grant.revoke": "撤销应用授权",
-  "token.reuse": "检测到令牌重放",
-  "admin.user_create": "添加用户",
-  "admin.user_update": "修改用户",
-  "admin.user_signout": "强制用户退出",
-  "admin.invite_create": "生成邀请码",
-  "admin.invite_revoke": "撤销邀请码",
-  "admin.settings_update": "修改注册设置",
-  "admin.app_create": "添加应用",
-  "admin.app_update": "修改应用",
-  "admin.app_delete": "删除应用",
-  "admin.app_secret": "重新生成应用密钥",
-  "admin.key_rotate": "生成签名密钥",
-  "admin.key_retire": "停用签名密钥",
-  "totp.create": "添加验证器",
-  "totp.update": "修改验证器",
-  "totp.delete": "删除验证器",
-  "totp.assign": "分配验证器",
-  "avatar.set": "更新头像",
-  "avatar.remove": "移除头像",
-};
-
-const shortTime = new Intl.DateTimeFormat("zh-CN", {
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-});
 
 /**
  * Tier 1: Sovereign Identity Pass with Authorized External Apps on the right.
@@ -338,7 +290,7 @@ function SovereignDossierHero({
 /**
  * Tier 2: 4-Column Numbered Tactile Command Deck
  */
-function CommandTile({
+export function CommandTile({
   index,
   href,
   icon,
@@ -627,147 +579,6 @@ function SecurityTerminals({
   );
 }
 
-/**
- * Admin Telemetry & OIDC Registry Console
- */
-function AdminCommandDeck({
-  events,
-  apps,
-  issuer,
-  totp,
-  sessions,
-  onReload,
-}: {
-  events: AuditEvent[] | null;
-  apps: App[] | null;
-  issuer: string;
-  totp: TotpEntry[] | null;
-  sessions: DeviceSession[] | null;
-  onReload: () => void;
-}) {
-  return (
-    <div className="grid gap-6 lg:grid-cols-12">
-      {/* Left 7 Cols: Live Audit Telemetry + TOTP Vault */}
-      <div className="space-y-6 lg:col-span-7">
-        <LiveTotpVault entries={totp} />
-
-        <section className="panel overflow-hidden">
-          <header className="flex items-center justify-between gap-3 border-b border-line bg-desk/25 px-5 py-4 sm:px-6">
-            <div className="flex items-center gap-3">
-              <span className="grid size-9 shrink-0 place-items-center rounded-[10px] border border-line bg-white text-ink-soft shadow-xs">
-                <Icon name="history" className="size-[1.0625rem]" />
-              </span>
-              <div>
-                <h2 className="text-[0.9375rem] font-semibold">实时安全审计遥测 (Audit Stream)</h2>
-                <p className="text-xs text-ink-soft">全站最新登录、令牌签发与管理操作轨迹</p>
-              </div>
-            </div>
-            <Link
-              href="/admin/events"
-              className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2.5 py-1.5 text-xs font-medium text-ink hover:border-stamp/40 hover:text-stamp"
-            >
-              完整审计日志
-              <Icon name="chevron" className="size-3.5" />
-            </Link>
-          </header>
-
-          <div className="p-5 sm:p-6">
-            {!events || events.length === 0 ? (
-              <Empty icon="history">暂无审计事件记录。</Empty>
-            ) : (
-              <div className="relative space-y-3.5 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-px before:bg-line">
-                {events.slice(0, 6).map((e) => (
-                  <div key={e.id} className="relative flex items-start justify-between gap-4 pl-6">
-                    <span
-                      aria-hidden="true"
-                      className={`absolute top-1.5 left-1 size-2 rounded-full ${eventDotTone(e.type)}`}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-medium text-ink">
-                          {eventTypeLabels[e.type] ?? e.type}
-                        </span>
-                        {e.subjectName && (
-                          <span className="truncate rounded border border-line bg-desk/50 px-1.5 py-0.5 font-mono text-[0.6875rem] text-ink-soft">
-                            {e.subjectName}
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-0.5 truncate text-xs text-ink-soft">
-                        操作人：{e.actorEmail || "系统"} {e.ip ? `· IP ${e.ip}` : ""}
-                      </p>
-                    </div>
-                    <span className="shrink-0 font-mono text-xs text-ink-faint tabular-nums">
-                      {shortTime.format(new Date(e.at))}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-      </div>
-
-      {/* Right 5 Cols: OIDC Discovery Quick-Copy & Terminals */}
-      <div className="space-y-6 lg:col-span-5">
-        <section className="panel overflow-hidden">
-          <header className="flex items-center justify-between gap-3 border-b border-line bg-desk/25 px-5 py-4 sm:px-6">
-            <div className="flex items-center gap-3">
-              <span className="grid size-9 shrink-0 place-items-center rounded-[10px] border border-stamp/20 bg-stamp/[0.06] text-stamp">
-                <Icon name="globe" className="size-[1.0625rem]" />
-              </span>
-              <div>
-                <h2 className="text-[0.9375rem] font-semibold">OIDC 认证中心端点</h2>
-                <p className="text-xs text-ink-soft">快速复制 Issuer 与已注册客户端</p>
-              </div>
-            </div>
-            <Link
-              href="/admin/apps"
-              className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2.5 py-1.5 text-xs font-medium text-ink hover:border-stamp/40 hover:text-stamp"
-            >
-              管理应用
-              <Icon name="chevron" className="size-3.5" />
-            </Link>
-          </header>
-
-          <div className="space-y-4 p-5 sm:p-6">
-            <div>
-              <p className="eyebrow mb-1.5">OIDC ISSUER 地址</p>
-              <Copyable value={issuer} label="Issuer" />
-            </div>
-            <div>
-              <p className="eyebrow mb-1.5">OIDC DISCOVERY 配置发现</p>
-              <Copyable value={`${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`} label="Discovery" />
-            </div>
-
-            {apps && apps.length > 0 && (
-              <div className="border-t border-line pt-3.5">
-                <p className="eyebrow mb-2.5">已接入客户端 ({apps.length})</p>
-                <div className="space-y-2">
-                  {apps.slice(0, 3).map((app) => (
-                    <div
-                      key={app.id}
-                      className="flex items-center justify-between gap-2 rounded-xl border border-line bg-desk/30 px-3 py-2"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-semibold text-ink">{app.name}</p>
-                        <p className="truncate font-mono text-[0.6875rem] text-ink-soft">{app.id}</p>
-                      </div>
-                      <Badge tone="plain">{app.type.toUpperCase()}</Badge>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
-
-        <SecurityTerminals sessions={sessions} onReload={onReload} />
-      </div>
-    </div>
-  );
-}
-
 export function AccountPage() {
   const { session } = useSession();
   const user = session?.user;
@@ -782,13 +593,6 @@ export function AccountPage() {
   const [mailboxes, setMailboxes] = useState<MyMailbox[] | null>(null);
   const [mailError, setMailError] = useState("");
 
-  // Admin state
-  const [adminUsers, setAdminUsers] = useState<User[] | null>(null);
-  const [adminApps, setAdminApps] = useState<App[] | null>(null);
-  const [adminEvents, setAdminEvents] = useState<AuditEvent[] | null>(null);
-  const [adminTotp, setAdminTotp] = useState<TotpEntry[] | null>(null);
-  const [adminMailCount, setAdminMailCount] = useState<number | null>(null);
-
   const loadPersonal = () => {
     api.sessions().then((r) => setSessions(r.sessions)).catch(() => {});
     api.passkeys().then((r) => setPasskeys(r.passkeys)).catch(() => {});
@@ -800,120 +604,67 @@ export function AccountPage() {
     if (!user) return;
     loadPersonal();
 
-    if (user.isAdmin) {
-      api.users().then((r) => setAdminUsers(r.users)).catch(() => {});
-      api.apps().then((r) => setAdminApps(r.apps)).catch(() => {});
-      api.events("?limit=6").then((r) => setAdminEvents(r.events)).catch(() => {});
-      api.adminTotp().then((r) => setAdminTotp(r.entries)).catch(() => {});
-      api.mailGrants().then((r) => setAdminMailCount(r.grants.length)).catch(() => {});
-    } else {
-      api
-        .mailStatus()
-        .then((st) => {
-          setMailConfigured(st.configured);
-          if (st.configured) {
-            return api.myMailboxes().then((r) => setMailboxes(r.mailboxes));
-          }
-        })
-        .catch((e) => setMailError(errorMessage(e)));
-    }
-  }, [user?.id, user?.isAdmin]);
+    api
+      .mailStatus()
+      .then((st) => {
+        setMailConfigured(st.configured);
+        if (st.configured) {
+          return api.myMailboxes().then((r) => setMailboxes(r.mailboxes));
+        }
+      })
+      .catch((e) => setMailError(errorMessage(e)));
+  }, [user?.id]);
 
   // Keep TOTP codes ticking fresh while on the dashboard
   useEffect(() => {
-    const list = user?.isAdmin ? (totp?.length ? totp : adminTotp) : totp;
-    const soonest = list?.reduce((min, e) => Math.min(min, e.remaining || e.period || 30), 30) ?? 0;
+    const soonest = totp?.reduce((min, e) => Math.min(min, e.remaining || e.period || 30), 30) ?? 0;
     if (!soonest) return;
     const timer = window.setTimeout(() => {
       api.myTotp().then((r) => setTotp(r.entries)).catch(() => {});
-      if (user?.isAdmin) {
-        api.adminTotp().then((r) => setAdminTotp(r.entries)).catch(() => {});
-      }
     }, soonest * 1000);
     return () => window.clearTimeout(timer);
-  }, [totp, adminTotp, user?.isAdmin]);
+  }, [totp]);
 
   if (!user) return null;
 
-  const displayedTotp = user.isAdmin ? (totp && totp.length > 0 ? totp : adminTotp) : totp;
-
-  const tiles = user.isAdmin
-    ? [
-        {
-          index: "01",
-          href: "/admin/users",
-          icon: "users" as IconName,
-          title: "用户目录",
-          metric: adminUsers ? adminUsers.length : "—",
-          metricLabel: `位注册成员 (${adminUsers ? adminUsers.filter((u) => u.isAdmin).length : 0} 管理员)`,
-          description: "管理账户状态、角色权限与安全重置",
-        },
-        {
-          index: "02",
-          href: "/admin/apps",
-          icon: "apps" as IconName,
-          title: "接入应用",
-          metric: adminApps ? adminApps.length : "—",
-          metricLabel: "个 OIDC 客户端",
-          description: "配置应用回调地址、访问策略与密钥",
-        },
-        {
-          index: "03",
-          href: "/admin/mail",
-          icon: "inbox" as IconName,
-          title: "邮件中台",
-          metric: adminMailCount !== null ? adminMailCount : "—",
-          metricLabel: "个已分配邮箱",
-          description: "统一分配收信邮箱与验证码路由规则",
-        },
-        {
-          index: "04",
-          href: "/admin/totp",
-          icon: "timer" as IconName,
-          title: "共享验证器",
-          metric: adminTotp ? adminTotp.length : "—",
-          metricLabel: "枚团队动态令牌",
-          description: "集中托管并向团队成员授权双因素验证码",
-        },
-      ]
-    : [
-        {
-          index: "01",
-          href: "/settings",
-          icon: "user" as IconName,
-          title: "个人资料与授权",
-          metric: grants ? grants.length : "—",
-          metricLabel: "个已授权应用",
-          description: "修改对外显示名称与管理 OIDC 应用授权",
-        },
-        {
-          index: "02",
-          href: "/settings",
-          icon: "lock" as IconName,
-          title: "登录与安全",
-          metric: (passkeys?.length ?? 0) + 1,
-          metricLabel: `种登录凭证 · ${sessions?.length ?? 1} 台设备在线`,
-          description: "管理登录密码、生物识别通行密钥与会话",
-        },
-        {
-          index: "03",
-          href: "/mail",
-          icon: "inbox" as IconName,
-          title: "我的专用邮箱",
-          metric: mailboxes ? mailboxes.length : "—",
-          metricLabel: "个分配收件箱",
-          description: "实时接收邮件并自动提取一次性登录验证码",
-        },
-        {
-          index: "04",
-          href: "/totp",
-          icon: "timer" as IconName,
-          title: "双因素验证器",
-          metric: totp ? totp.length : "—",
-          metricLabel: "枚动态验证码",
-          description: "查看管理员分配的共享令牌或管理私人密钥",
-        },
-      ];
+  const tiles = [
+    {
+      index: "01",
+      href: "/settings",
+      icon: "user" as IconName,
+      title: "个人资料与授权",
+      metric: grants ? grants.length : "—",
+      metricLabel: "个已授权应用",
+      description: "修改对外显示名称与管理 OIDC 应用授权",
+    },
+    {
+      index: "02",
+      href: "/settings",
+      icon: "lock" as IconName,
+      title: "登录与安全",
+      metric: (passkeys?.length ?? 0) + 1,
+      metricLabel: `种登录凭证 · ${sessions?.length ?? 1} 台设备在线`,
+      description: "管理登录密码、生物识别通行密钥与会话",
+    },
+    {
+      index: "03",
+      href: "/mail",
+      icon: "inbox" as IconName,
+      title: "我的专用邮箱",
+      metric: mailboxes ? mailboxes.length : "—",
+      metricLabel: "个分配收件箱",
+      description: "实时接收邮件并自动提取一次性登录验证码",
+    },
+    {
+      index: "04",
+      href: "/totp",
+      icon: "timer" as IconName,
+      title: "双因素验证器",
+      metric: totp ? totp.length : "—",
+      metricLabel: "枚动态验证码",
+      description: "查看管理员分配的共享令牌或管理私人密钥",
+    },
+  ];
 
   return (
     <AppShell
@@ -939,26 +690,15 @@ export function AccountPage() {
         </div>
 
         {/* Tier 3: Live Bento Workspace */}
-        {user.isAdmin ? (
-          <AdminCommandDeck
-            events={adminEvents}
-            apps={adminApps}
-            issuer={session.issuer}
-            totp={displayedTotp}
-            sessions={sessions}
-            onReload={loadPersonal}
-          />
-        ) : (
-          <div className="grid gap-6 lg:grid-cols-12">
-            <div className="space-y-6 lg:col-span-7">
-              <MailboxRadar configured={mailConfigured} mailboxes={mailboxes} error={mailError} />
-              <LiveTotpVault entries={totp} />
-            </div>
-            <div className="lg:col-span-5">
-              <SecurityTerminals sessions={sessions} onReload={loadPersonal} />
-            </div>
+        <div className="grid gap-6 lg:grid-cols-12">
+          <div className="space-y-6 lg:col-span-7">
+            <MailboxRadar configured={mailConfigured} mailboxes={mailboxes} error={mailError} />
+            <LiveTotpVault entries={totp} />
           </div>
-        )}
+          <div className="lg:col-span-5">
+            <SecurityTerminals sessions={sessions} onReload={loadPersonal} />
+          </div>
+        </div>
       </div>
     </AppShell>
   );

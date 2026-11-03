@@ -46,19 +46,22 @@ type NavItem = { href: string; label: string; icon: IconName };
 type NavGroup = { label: string; items: NavItem[] };
 
 function navFor(isAdmin: boolean): NavGroup[] {
+  const personal: NavGroup = {
+    label: "个人",
+    items: [
+      { href: "/account", label: "我的账户", icon: "user" },
+      { href: "/settings", label: "用户设置", icon: "settings" },
+      { href: "/mail", label: "我的邮箱", icon: "inbox" },
+      { href: "/totp", label: "验证器", icon: "timer" },
+    ],
+  };
   if (isAdmin) {
     return [
-      {
-        label: "个人",
-        items: [
-          { href: "/account", label: "我的账户", icon: "user" },
-          { href: "/settings", label: "用户设置", icon: "settings" },
-          { href: "/totp", label: "验证器", icon: "timer" },
-        ],
-      },
+      personal,
       {
         label: "管理",
         items: [
+          { href: "/admin", label: "管理面板", icon: "shield" },
           { href: "/admin/users", label: "用户", icon: "users" },
           { href: "/admin/invites", label: "注册与邀请", icon: "mail" },
           { href: "/admin/apps", label: "应用", icon: "apps" },
@@ -76,17 +79,7 @@ function navFor(isAdmin: boolean): NavGroup[] {
       },
     ];
   }
-  return [
-    {
-      label: "个人",
-      items: [
-        { href: "/account", label: "我的账户", icon: "user" },
-        { href: "/settings", label: "用户设置", icon: "settings" },
-        { href: "/mail", label: "我的邮箱", icon: "inbox" },
-        { href: "/totp", label: "验证器", icon: "timer" },
-      ],
-    },
-  ];
+  return [personal];
 }
 
 function Sidebar({
