@@ -438,19 +438,25 @@ function LiveTotpVault({ entries }: { entries: TotpEntry[] | null }) {
   );
 }
 
+type DashboardMailbox = {
+  provider: "outlook" | "xmail";
+  address: string;
+  assignedAt: string;
+  remark?: string;
+  status?: "active" | "disabled";
+};
+
 /**
  * Dedicated Mailbox & Verification Code Radar
  */
 function MailboxRadar({
-  configured,
   mailboxes,
   error,
 }: {
-  configured: boolean | null;
-  mailboxes: MyMailbox[] | null;
+  mailboxes: DashboardMailbox[] | null;
   error: string;
 }) {
-  const [activeAddress, setActiveAddress] = useState<string | null>(null);
+  const [activeBox, setActiveBox] = useState<{ address: string; provider: "outlook" | "xmail" } | null>(null);
 
   return (
     <section className="panel overflow-hidden">
@@ -475,33 +481,41 @@ function MailboxRadar({
 
       <div className="p-5 sm:p-6">
         {error && <p className="mb-3 text-sm text-void">{error}</p>}
-        {configured === false ? (
-          <Empty icon="inbox">系统尚未连接 xmail 邮件服务。</Empty>
-        ) : activeAddress ? (
-          <MailViewer address={activeAddress} onBack={() => setActiveAddress(null)} />
+        {activeBox ? (
+          <MailViewer address={activeBox.address} provider={activeBox.provider} onBack={() => setActiveBox(null)} />
         ) : !mailboxes || mailboxes.length === 0 ? (
           <Empty icon="inbox">当前暂无分配给你的专用收信邮箱。</Empty>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
-            {mailboxes.map((m) => (
-              <button
-                type="button"
-                key={m.address}
-                onClick={() => setActiveAddress(m.address)}
-                className="group flex w-full items-center gap-3.5 rounded-xl border border-line bg-white p-3.5 text-left shadow-xs transition-all hover:border-stamp/45 hover:shadow-[0_0_0_3px_rgb(90_63_192/0.08)]"
-              >
-                <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-stamp/20 bg-stamp/[0.06] text-stamp">
-                  <Icon name="mail" className="size-5" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-mono text-[0.8125rem] font-semibold text-ink group-hover:text-stamp">
-                    {m.address}
+            {mailboxes.map((m) => {
+              const disabled = m.status === "disabled";
+              return (
+                <button
+                  type="button"
+                  key={`${m.provider}:${m.address}`}
+                  disabled={disabled}
+                  onClick={() => setActiveBox({ address: m.address, provider: m.provider })}
+                  className="group flex w-full items-center gap-3.5 rounded-xl border border-line bg-white p-3.5 text-left shadow-xs transition-all hover:border-stamp/45 hover:shadow-[0_0_0_3px_rgb(90_63_192/0.08)] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-stamp/20 bg-stamp/[0.06] text-stamp">
+                    <Icon name="mail" className="size-5" />
                   </span>
-                  <span className="mt-0.5 block text-xs text-ink-soft">分配于 {formatDate(m.assignedAt)}</span>
-                </span>
-                <Icon name="chevron" className="size-4 shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5 group-hover:text-stamp" />
-              </button>
-            ))}
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      <span className="truncate font-mono text-[0.8125rem] font-semibold text-ink group-hover:text-stamp">
+                        {m.address}
+                      </span>
+                      {m.provider === "outlook" && <Badge tone="stamp">Outlook</Badge>}
+                      {disabled && <Badge tone="void">已停用</Badge>}
+                    </span>
+                    <span className="mt-0.5 block truncate text-xs text-ink-soft">
+                      {m.remark ? `${m.remark} · ` : ""}分配于 {formatDate(m.assignedAt)}
+                    </span>
+                  </span>
+                  <Icon name="chevron" className="size-4 shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5 group-hover:text-stamp" />
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
@@ -589,8 +603,7 @@ export function AccountPage() {
   const [totp, setTotp] = useState<TotpEntry[] | null>(null);
 
   // User mail state
-  const [mailConfigured, setMailConfigured] = useState<boolean | null>(null);
-  const [mailboxes, setMailboxes] = useState<MyMailbox[] | null>(null);
+  const [mailboxes, setMailboxes] = useState<DashboardMailbox[] | null>(null);
   const [mailError, setMailError] = useState("");
 
   const loadPersonal = () => {
@@ -604,13 +617,29 @@ export function AccountPage() {
     if (!user) return;
     loadPersonal();
 
-    api
-      .mailStatus()
-      .then((st) => {
-        setMailConfigured(st.configured);
+    Promise.all([
+      api.myOutlookMailboxes().catch(() => ({ mailboxes: [] })),
+      api.mailStatus().catch(() => ({ configured: false })),
+    ])
+      .then(async ([outlookRes, st]) => {
+        const list: DashboardMailbox[] = (outlookRes.mailboxes || []).map((m) => ({
+          provider: "outlook" as const,
+          address: m.address,
+          assignedAt: m.assignedAt,
+          remark: m.remark,
+          status: m.status,
+        }));
         if (st.configured) {
-          return api.myMailboxes().then((r) => setMailboxes(r.mailboxes));
+          const xmRes = await api.myMailboxes().catch(() => ({ mailboxes: [] as MyMailbox[] }));
+          for (const m of xmRes.mailboxes || []) {
+            list.push({
+              provider: "xmail" as const,
+              address: m.address,
+              assignedAt: m.assignedAt,
+            });
+          }
         }
+        setMailboxes(list);
       })
       .catch((e) => setMailError(errorMessage(e)));
   }, [user?.id]);
@@ -692,7 +721,7 @@ export function AccountPage() {
         {/* Tier 3: Live Bento Workspace */}
         <div className="grid gap-6 lg:grid-cols-12">
           <div className="space-y-6 lg:col-span-7">
-            <MailboxRadar configured={mailConfigured} mailboxes={mailboxes} error={mailError} />
+            <MailboxRadar mailboxes={mailboxes} error={mailError} />
             <LiveTotpVault entries={totp} />
           </div>
           <div className="lg:col-span-5">

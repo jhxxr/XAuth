@@ -19,6 +19,7 @@ import (
 	"xauth/internal/config"
 	"xauth/internal/mailer"
 	"xauth/internal/oidcprovider"
+	"xauth/internal/outlook"
 	"xauth/internal/store"
 	"xauth/internal/xmail"
 )
@@ -36,6 +37,7 @@ type Server struct {
 	inviteIP   *limiter
 	// mail is nil when xmail is not configured.
 	mail    *xmail.Client
+	outlook *outlook.Client
 	mailer  mailer.Sender
 	resetIP *limiter
 	views   viewLog
@@ -66,6 +68,7 @@ func New(cfg config.Config, st *store.Store, p *oidcprovider.Provider, ui fs.FS,
 		signupIP:   newLimiter(10, time.Hour),
 		inviteIP:   newLimiter(30, 15*time.Minute),
 		resetIP:    newLimiter(5, time.Hour),
+		outlook:    outlook.NewClient(),
 	}
 	s.envXMailURL = cfg.XMailBaseURL
 	s.envXMailKey = cfg.XMailAPIKey.Reveal()
@@ -92,6 +95,19 @@ func (s *Server) SetMailer(m mailer.Sender) {
 	s.mu.Lock()
 	s.mailer = m
 	s.mu.Unlock()
+}
+
+// SetOutlookClient replaces the Outlook mail client (used by tests).
+func (s *Server) SetOutlookClient(c *outlook.Client) {
+	s.mu.Lock()
+	s.outlook = c
+	s.mu.Unlock()
+}
+
+func (s *Server) outlookClient() *outlook.Client {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.outlook
 }
 
 // Handler returns the root HTTP handler.
@@ -152,6 +168,12 @@ func (s *Server) Handler() http.Handler {
 				r.Post("/emails/{id}/read", s.handleMyEmailRead)
 				r.Post("/emails/{id}/star", s.handleMyEmailStar)
 			})
+			r.Route("/outlook", func(r chi.Router) {
+				r.Get("/mailboxes", s.handleMyOutlookMailboxes)
+				r.Get("/mailboxes/{address}/emails", s.handleMyOutlookEmails)
+				r.Get("/mailboxes/{address}/emails/{messageID}", s.handleMyOutlookEmail)
+				r.Get("/mailboxes/{address}/emails/{messageID}/html", s.handleMyOutlookEmailHTML)
+			})
 			r.Route("/admin", func(r chi.Router) {
 				r.Use(s.requireAdmin)
 				r.Get("/users", s.handleListUsers)
@@ -182,6 +204,25 @@ func (s *Server) Handler() http.Handler {
 				r.Delete("/mail-grants/{address}", s.handleDeleteMailGrants)
 				r.Get("/mail-html/{id}", s.handleAdminMailHTML)
 				r.HandleFunc("/mail/*", s.handleMailProxy)
+				r.Route("/outlook", func(r chi.Router) {
+					r.Get("/groups", s.handleListOutlookGroups)
+					r.Post("/groups", s.handleCreateOutlookGroup)
+					r.Patch("/groups/{id}", s.handleUpdateOutlookGroup)
+					r.Delete("/groups/{id}", s.handleDeleteOutlookGroup)
+					r.Get("/accounts", s.handleListOutlookAccounts)
+					r.Get("/accounts/{id}", s.handleGetOutlookAccount)
+					r.Post("/accounts/import", s.handleImportOutlookAccounts)
+					r.Patch("/accounts/{id}", s.handleUpdateOutlookAccount)
+					r.Delete("/accounts/{id}", s.handleDeleteOutlookAccount)
+					r.Post("/accounts/batch-delete", s.handleBatchDeleteOutlookAccounts)
+					r.Put("/accounts/{id}/grants", s.handleSetOutlookGrants)
+					r.Post("/accounts/batch-grants", s.handleBatchSetOutlookGrants)
+					r.Post("/accounts/batch-group", s.handleBatchMoveOutlookGroup)
+					r.Get("/export", s.handleExportOutlookAccounts)
+					r.Get("/mailboxes/{address}/emails", s.handleAdminOutlookEmails)
+					r.Get("/mailboxes/{address}/emails/{messageID}", s.handleAdminOutlookEmail)
+					r.Get("/mailboxes/{address}/emails/{messageID}/html", s.handleAdminOutlookEmailHTML)
+				})
 			})
 			r.NotFound(func(w http.ResponseWriter, _ *http.Request) { writeError(w, http.StatusNotFound, "not_found") })
 			r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {

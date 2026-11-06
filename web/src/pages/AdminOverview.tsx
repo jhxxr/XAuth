@@ -20,7 +20,7 @@ import { CommandTile } from "./Account";
 function eventDotTone(type: string) {
   if (/failure|denied|reuse/.test(type)) return "bg-void ring-4 ring-void/15";
   if (/delete|retire|signout|revoke|unassign|remove/.test(type)) return "bg-[#c47a1a] ring-4 ring-[#c47a1a]/15";
-  if (type.startsWith("admin.") || type.startsWith("totp.") || type.startsWith("mail.")) return "bg-stamp ring-4 ring-stamp/15";
+  if (type.startsWith("admin.") || type.startsWith("totp.") || type.startsWith("mail.") || type.startsWith("outlook.")) return "bg-stamp ring-4 ring-stamp/15";
   if (/success|signin|register|verify/.test(type)) return "bg-seal ring-4 ring-seal/15";
   return "bg-ink-faint ring-4 ring-ink/10";
 }
@@ -56,6 +56,10 @@ export const eventTypeLabels: Record<string, string> = {
   "mail.assign": "分配邮箱",
   "mail.unassign": "取消邮箱分配",
   "mail.admin_view": "管理员查看邮箱",
+  "outlook.import": "批量导入 Outlook 邮箱",
+  "outlook.update": "修改 Outlook 邮箱",
+  "outlook.delete": "删除 Outlook 邮箱",
+  "outlook.export": "导出 Outlook 邮箱",
   "totp.create": "添加验证器",
   "totp.update": "修改验证器",
   "totp.delete": "删除验证器",
@@ -195,7 +199,13 @@ export function AdminOverviewPage() {
     api.apps().then((r) => setAdminApps(r.apps)).catch(() => {});
     api.events("?limit=6").then((r) => setAdminEvents(r.events)).catch(() => {});
     api.adminTotp().then((r) => setAdminTotp(r.entries)).catch(() => {});
-    api.mailGrants().then((r) => setAdminMailCount(r.grants.length)).catch(() => {});
+    Promise.all([
+      api.mailGrants().catch(() => ({ grants: [] })),
+      api.outlookAccounts().catch(() => ({ accounts: [] })),
+    ]).then(([mRes, oRes]) => {
+      const assignedOutlook = (oRes.accounts || []).filter((i) => (i.userIds?.length ?? 0) > 0).length;
+      setAdminMailCount(mRes.grants.length + assignedOutlook);
+    });
     api.invites().then((r) => setInvites(r.invites)).catch(() => {});
     api.registrationSettings().then((r) => setSysSettings(r)).catch(() => {});
     api.keys().then((r) => setKeys(r.keys)).catch(() => {});

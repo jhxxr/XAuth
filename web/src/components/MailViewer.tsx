@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useId } from "react";
-import { api, errorMessage, type EmailDetail, type EmailItem, type VerificationCodeResult } from "../api";
+import { api, errorMessage, type EmailDetail, type EmailItem, type OutlookMethod, type VerificationCodeResult } from "../api";
 import { Icon } from "./Icon";
 import { Avatar, Badge, Button, IconTile, Notice, Segmented } from "./ui";
 
@@ -14,6 +14,12 @@ function formatDate(sec: number) {
   if (!sec) return "";
   return timeFmt.format(new Date(sec * 1000));
 }
+
+const methodLabels: Record<string, string> = {
+  graph: "Graph API",
+  imap_new: "新版 IMAP (outlook.live.com)",
+  imap_old: "旧版 IMAP (office365.com)",
+};
 
 /** The star is not part of the shared icon set; drawn here in the same Lucide style. */
 function StarIcon({ filled, className = "size-4" }: { filled?: boolean; className?: string }) {
@@ -51,6 +57,7 @@ function CopyCode({ value }: { value: string }) {
 
 type MailViewerProps = {
   address: string;
+  provider?: "xmail" | "outlook";
   adminMode?: boolean;
   onBack?: () => void;
 };
@@ -60,7 +67,8 @@ type MailboxSummary = {
   services?: { name: string; loginUrl: string; note: string | null }[];
 };
 
-export function MailViewer({ address, adminMode = false, onBack }: MailViewerProps) {
+export function MailViewer({ address, provider = "xmail", adminMode = false, onBack }: MailViewerProps) {
+  const isOutlook = provider === "outlook";
   const [emails, setEmails] = useState<EmailItem[] | null>(null);
   const [summary, setSummary] = useState<MailboxSummary | null>(null);
   const [code, setCode] = useState<VerificationCodeResult | null>(null);
@@ -69,6 +77,8 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
   const [search, setSearch] = useState("");
   const [filterRead, setFilterRead] = useState<string>("");
   const [filterStarred, setFilterStarred] = useState(false);
+  const [outlookMethod, setOutlookMethod] = useState<OutlookMethod>("auto");
+  const [usedMethod, setUsedMethod] = useState<string>("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [cleaningUp, setCleaningUp] = useState(false);
@@ -76,6 +86,7 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
   const readerRef = useRef<HTMLDivElement>(null);
 
   const loadSummary = async () => {
+    if (isOutlook) return;
     try {
       if (adminMode) {
         const res = await api.adminMail<{ stats: { total: number; unread: number }; services: { name: string; loginUrl: string; note: string | null }[] }>(
@@ -96,7 +107,21 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
     setLoading(true);
     setError("");
     try {
-      if (adminMode) {
+      if (isOutlook) {
+        const res = adminMode
+          ? await api.adminOutlookEmails(address, outlookMethod, 25)
+          : await api.myOutlookEmails(address, outlookMethod, 25);
+        const list = res.items || [];
+        setEmails(list);
+        setUsedMethod(res.method || "");
+        setCode(res.latestCode && res.latestCode.code ? res.latestCode : null);
+        setSummary({
+          stats: {
+            total: list.length,
+            unread: list.filter((x) => !x.isRead).length,
+          },
+        });
+      } else if (adminMode) {
         const queryParams = new URLSearchParams();
         if (search) queryParams.set("q", search);
         if (filterRead) queryParams.set("is_read", filterRead);
@@ -123,6 +148,7 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
   };
 
   const loadLatestCode = async () => {
+    if (isOutlook) return;
     setCodeLoading(true);
     try {
       if (adminMode) {
@@ -143,10 +169,11 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
   };
 
   useEffect(() => {
+    setSelectedEmail(null);
     void loadSummary();
     void loadEmails();
     void loadLatestCode();
-  }, [address, filterRead, filterStarred]);
+  }, [address, provider, filterRead, filterStarred, outlookMethod]);
 
   // On narrow layouts the reader replaces the list; bring its top into view.
   useEffect(() => {
@@ -156,6 +183,7 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
 
   const deleteEmail = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
+    if (isOutlook) return;
     if (!window.confirm("确定删除这封邮件？")) return;
     try {
       await api.adminMail("DELETE", `/emails/${encodeURIComponent(id)}`);
@@ -167,6 +195,7 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
   };
 
   const cleanupEmails = async () => {
+    if (isOutlook) return;
     const daysStr = window.prompt("清理多少天前的旧邮件（星标邮件不会被删除）：", "30");
     if (!daysStr) return;
     const days = parseInt(daysStr, 10);
@@ -186,7 +215,13 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
 
   const viewEmail = async (item: EmailItem) => {
     try {
-      if (adminMode) {
+      if (isOutlook) {
+        const res = adminMode
+          ? await api.adminOutlookEmail(address, item.id, outlookMethod)
+          : await api.myOutlookEmail(address, item.id, outlookMethod);
+        setSelectedEmail(res.email);
+        setEmails((prev) => prev?.map((e) => (e.id === item.id ? { ...e, isRead: true } : e)) ?? null);
+      } else if (adminMode) {
         const res = await api.adminMail<{ email: EmailDetail }>("GET", `/emails/${item.id}`);
         setSelectedEmail(res.email);
         if (!item.isRead) {
@@ -208,6 +243,7 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
 
   const toggleStar = async (e: React.MouseEvent, item: EmailItem) => {
     e.stopPropagation();
+    if (isOutlook) return;
     try {
       const nextStar = !item.isStarred;
       if (adminMode) {
@@ -224,6 +260,19 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
     }
   };
 
+  const visibleEmails =
+    isOutlook && search.trim()
+      ? emails?.filter((item) => {
+          const kw = search.trim().toLowerCase();
+          return (
+            (item.subject || "").toLowerCase().includes(kw) ||
+            item.from.toLowerCase().includes(kw) ||
+            (item.fromName || "").toLowerCase().includes(kw) ||
+            item.preview.toLowerCase().includes(kw)
+          );
+        }) ?? null
+      : emails;
+
   return (
     <div className="@container space-y-5">
       {/* Top Bar */}
@@ -238,9 +287,13 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
           <div className="flex min-w-0 flex-1 basis-64 items-center gap-3.5">
             <IconTile name="inbox" tone="stamp" />
             <div className="min-w-0">
-              <p className="truncate font-mono text-[0.9375rem] font-semibold text-ink" title={address}>
-                {address}
-              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="truncate font-mono text-[0.9375rem] font-semibold text-ink" title={address}>
+                  {address}
+                </p>
+                {isOutlook && <Badge tone="stamp">Outlook</Badge>}
+                {isOutlook && usedMethod && <Badge tone="seal">{methodLabels[usedMethod] ?? usedMethod}</Badge>}
+              </div>
               <div className="mt-1 flex flex-wrap items-center gap-1.5">
                 {summary?.stats ? (
                   <>
@@ -256,7 +309,7 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {adminMode && (
+            {adminMode && !isOutlook && (
               <Button variant="ghost" size="sm" className="hover:text-void" onClick={() => void cleanupEmails()} busy={cleaningUp}>
                 {!cleaningUp && <Icon name="trash" className="size-3.5" />}
                 清理旧邮件
@@ -339,49 +392,67 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") void loadEmails();
+                if (e.key === "Enter" && !isOutlook) void loadEmails();
               }}
               placeholder="搜索主题、发件人..."
               aria-label="搜索邮件"
               className="field !h-9 !pr-16 !pl-9 text-sm"
             />
-            <button
-              type="button"
-              onClick={() => void loadEmails()}
-              className="absolute top-1/2 right-1 h-7 -translate-y-1/2 rounded-md px-2.5 text-[0.8125rem] font-medium text-ink-soft transition-colors hover:bg-ink/[0.06] hover:text-ink"
-            >
-              搜索
-            </button>
+            {!isOutlook && (
+              <button
+                type="button"
+                onClick={() => void loadEmails()}
+                className="absolute top-1/2 right-1 h-7 -translate-y-1/2 rounded-md px-2.5 text-[0.8125rem] font-medium text-ink-soft transition-colors hover:bg-ink/[0.06] hover:text-ink"
+              >
+                搜索
+              </button>
+            )}
           </div>
-          <div className="flex items-center gap-2">
-            <Segmented
-              label="读取状态"
-              options={[
-                ["", "全部"],
-                ["false", "未读"],
-                ["true", "已读"],
-              ]}
-              value={filterRead}
-              onChange={setFilterRead}
-            />
-            <button
-              type="button"
-              aria-pressed={filterStarred}
-              onClick={() => setFilterStarred((cur) => !cur)}
-              className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[11px] border px-3 text-[0.8125rem] font-medium transition-colors ${
-                filterStarred ? "border-[#c98a12]/35 bg-[#c98a12]/[0.08] text-[#8a5d06]" : "border-line bg-white text-ink-soft hover:text-ink"
-              }`}
-            >
-              <StarIcon filled={filterStarred} className={`size-3.5 ${filterStarred ? starOn : ""}`} />
-              仅星标
-            </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {isOutlook ? (
+              <Segmented
+                label="Outlook 取信方式"
+                options={[
+                  ["auto", "自动"],
+                  ["graph", "Graph API"],
+                  ["imap_new", "新版 IMAP"],
+                  ["imap_old", "旧版 IMAP"],
+                ]}
+                value={outlookMethod}
+                onChange={setOutlookMethod}
+              />
+            ) : (
+              <>
+                <Segmented
+                  label="读取状态"
+                  options={[
+                    ["", "全部"],
+                    ["false", "未读"],
+                    ["true", "已读"],
+                  ]}
+                  value={filterRead}
+                  onChange={setFilterRead}
+                />
+                <button
+                  type="button"
+                  aria-pressed={filterStarred}
+                  onClick={() => setFilterStarred((cur) => !cur)}
+                  className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[11px] border px-3 text-[0.8125rem] font-medium transition-colors ${
+                    filterStarred ? "border-[#c98a12]/35 bg-[#c98a12]/[0.08] text-[#8a5d06]" : "border-line bg-white text-ink-soft hover:text-ink"
+                  }`}
+                >
+                  <StarIcon filled={filterStarred} className={`size-3.5 ${filterStarred ? starOn : ""}`} />
+                  仅星标
+                </button>
+              </>
+            )}
           </div>
         </div>
 
         <div className="@3xl:grid @3xl:h-[640px] @3xl:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
           {/* Email List */}
           <div className={`min-h-0 @3xl:overflow-y-auto @3xl:border-r @3xl:border-line ${selectedEmail ? "hidden @3xl:block" : ""}`}>
-            {emails === null && !error && (
+            {visibleEmails === null && !error && (
               <ul aria-hidden="true" className="divide-y divide-line/70">
                 {[0, 1, 2, 3].map((i) => (
                   <li key={i} className="flex gap-3 px-5 py-4">
@@ -394,7 +465,7 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
                 ))}
               </ul>
             )}
-            {emails?.length === 0 && (
+            {visibleEmails?.length === 0 && (
               <div className="flex flex-col items-center px-6 py-14 text-center">
                 <span aria-hidden="true" className="grid size-11 place-items-center rounded-xl border border-dashed border-line-strong text-ink-faint">
                   <Icon name="inbox" className="size-5" />
@@ -403,7 +474,7 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
               </div>
             )}
             <ul className="divide-y divide-line/70">
-              {emails?.map((item) => {
+              {visibleEmails?.map((item) => {
                 const active = selectedEmail?.id === item.id;
                 const sender = item.fromName || item.from;
                 return (
@@ -444,7 +515,7 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
                           <span className="shrink-0 text-[0.71875rem] text-ink-faint tabular-nums">{formatDate(item.createdAt)}</span>
                         </span>
                         <span className={`mt-0.5 block truncate text-sm ${!item.isRead ? "font-semibold text-ink" : "text-ink"}`}>{item.subject || "（无主题）"}</span>
-                        <span className={`mt-1 flex min-w-0 items-center gap-2 ${adminMode ? "pr-14" : "pr-7"}`}>
+                        <span className={`mt-1 flex min-w-0 items-center gap-2 ${adminMode && !isOutlook ? "pr-14" : !isOutlook ? "pr-7" : ""}`}>
                           {item.verificationCode && (
                             <span className="shrink-0 rounded-md border border-stamp/20 bg-stamp/[0.07] px-1.5 py-px font-mono text-[0.6875rem] font-semibold text-stamp">
                               <span className="sr-only">验证码: </span>
@@ -456,30 +527,32 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
                       </span>
                     </button>
 
-                    <div className="absolute right-2.5 bottom-2 flex items-center">
-                      {/* Admin Delete button */}
-                      {adminMode && (
+                    {!isOutlook && (
+                      <div className="absolute right-2.5 bottom-2 flex items-center">
+                        {/* Admin Delete button */}
+                        {adminMode && (
+                          <button
+                            type="button"
+                            onClick={(e) => void deleteEmail(e, item.id)}
+                            className="grid size-7 place-items-center rounded-md text-ink-faint opacity-0 transition-[opacity,color,background-color] group-hover:opacity-100 hover:bg-void/[0.06] hover:text-void focus-visible:opacity-100"
+                            title="删除邮件"
+                            aria-label="删除邮件"
+                          >
+                            <Icon name="trash" className="size-3.5" />
+                          </button>
+                        )}
+                        {/* Star toggle */}
                         <button
                           type="button"
-                          onClick={(e) => void deleteEmail(e, item.id)}
-                          className="grid size-7 place-items-center rounded-md text-ink-faint opacity-0 transition-[opacity,color,background-color] group-hover:opacity-100 hover:bg-void/[0.06] hover:text-void focus-visible:opacity-100"
-                          title="删除邮件"
-                          aria-label="删除邮件"
+                          onClick={(e) => void toggleStar(e, item)}
+                          className={`grid size-7 place-items-center rounded-md transition-colors hover:bg-ink/[0.05] ${item.isStarred ? starOn : "text-ink-faint hover:text-[#c98a12]"}`}
+                          aria-label={item.isStarred ? "取消星标" : "标记星标"}
+                          aria-pressed={item.isStarred}
                         >
-                          <Icon name="trash" className="size-3.5" />
+                          <StarIcon filled={item.isStarred} className="size-3.5" />
                         </button>
-                      )}
-                      {/* Star toggle */}
-                      <button
-                        type="button"
-                        onClick={(e) => void toggleStar(e, item)}
-                        className={`grid size-7 place-items-center rounded-md transition-colors hover:bg-ink/[0.05] ${item.isStarred ? starOn : "text-ink-faint hover:text-[#c98a12]"}`}
-                        aria-label={item.isStarred ? "取消星标" : "标记星标"}
-                        aria-pressed={item.isStarred}
-                      >
-                        <StarIcon filled={item.isStarred} className="size-3.5" />
-                      </button>
-                    </div>
+                      </div>
+                    )}
                   </li>
                 );
               })}
@@ -491,26 +564,36 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
             {selectedEmail ? (
               <EmailReader
                 key={selectedEmail.id}
+                address={address}
+                provider={provider}
                 email={selectedEmail}
                 adminMode={adminMode}
                 onClose={() => setSelectedEmail(null)}
-                onDelete={() => {
-                  if (!window.confirm("确定删除这封邮件？")) return;
-                  void api.adminMail("DELETE", `/emails/${encodeURIComponent(selectedEmail.id)}`).then(() => {
-                    setEmails((prev) => prev?.filter((x) => x.id !== selectedEmail.id) ?? null);
-                    setSelectedEmail(null);
-                  });
-                }}
-                onToggleStar={() => {
-                  const next = !selectedEmail.isStarred;
-                  setSelectedEmail({ ...selectedEmail, isStarred: next });
-                  setEmails((prev) => prev?.map((x) => (x.id === selectedEmail.id ? { ...x, isStarred: next } : x)) ?? null);
-                  if (adminMode) {
-                    void api.adminMail("POST", `/emails/${selectedEmail.id}/star`, { isStarred: next });
-                  } else {
-                    void api.toggleEmailStar(selectedEmail.id, next);
-                  }
-                }}
+                onDelete={
+                  !isOutlook && adminMode
+                    ? () => {
+                        if (!window.confirm("确定删除这封邮件？")) return;
+                        void api.adminMail("DELETE", `/emails/${encodeURIComponent(selectedEmail.id)}`).then(() => {
+                          setEmails((prev) => prev?.filter((x) => x.id !== selectedEmail.id) ?? null);
+                          setSelectedEmail(null);
+                        });
+                      }
+                    : undefined
+                }
+                onToggleStar={
+                  !isOutlook
+                    ? () => {
+                        const next = !selectedEmail.isStarred;
+                        setSelectedEmail({ ...selectedEmail, isStarred: next });
+                        setEmails((prev) => prev?.map((x) => (x.id === selectedEmail.id ? { ...x, isStarred: next } : x)) ?? null);
+                        if (adminMode) {
+                          void api.adminMail("POST", `/emails/${selectedEmail.id}/star`, { isStarred: next });
+                        } else {
+                          void api.toggleEmailStar(selectedEmail.id, next);
+                        }
+                      }
+                    : undefined
+                }
               />
             ) : (
               <div className="m-auto flex flex-col items-center px-6 py-16 text-center">
@@ -531,20 +614,32 @@ export function MailViewer({ address, adminMode = false, onBack }: MailViewerPro
 }
 
 function EmailReader({
+  address,
+  provider,
   email,
   adminMode,
   onClose,
   onDelete,
   onToggleStar,
 }: {
+  address: string;
+  provider: "xmail" | "outlook";
   email: EmailDetail;
   adminMode: boolean;
   onClose: () => void;
   onDelete?: () => void;
-  onToggleStar: () => void;
+  onToggleStar?: () => void;
 }) {
   const [viewHtml, setViewHtml] = useState(email.hasHtml);
-  const htmlSrc = adminMode ? `/api/admin/mail-html/${email.id}` : `/api/mail/emails/${email.id}/html`;
+  const methodParam = email.method ? `?method=${encodeURIComponent(email.method)}` : "";
+  const htmlSrc =
+    provider === "outlook"
+      ? adminMode
+        ? `/api/admin/outlook/mailboxes/${encodeURIComponent(address)}/emails/${encodeURIComponent(email.id)}/html${methodParam}`
+        : `/api/outlook/mailboxes/${encodeURIComponent(address)}/emails/${encodeURIComponent(email.id)}/html${methodParam}`
+      : adminMode
+        ? `/api/admin/mail-html/${email.id}`
+        : `/api/mail/emails/${email.id}/html`;
   const sender = email.fromName || email.from;
   const iconBtn = "grid size-8 place-items-center rounded-lg transition-colors";
 
@@ -563,16 +658,18 @@ function EmailReader({
         <div className="flex items-start gap-3">
           <h3 className="min-w-0 flex-1 text-[1.0625rem] leading-snug font-semibold tracking-tight break-words sm:text-lg">{email.subject || "（无主题）"}</h3>
           <div className="-mt-1 -mr-2 flex shrink-0 items-center gap-0.5">
-            <button
-              type="button"
-              onClick={onToggleStar}
-              className={`${iconBtn} hover:bg-ink/[0.05] ${email.isStarred ? starOn : "text-ink-soft hover:text-[#c98a12]"}`}
-              title={email.isStarred ? "取消星标" : "标记星标"}
-              aria-label={email.isStarred ? "取消星标" : "标记星标"}
-              aria-pressed={email.isStarred}
-            >
-              <StarIcon filled={email.isStarred} />
-            </button>
+            {onToggleStar && (
+              <button
+                type="button"
+                onClick={onToggleStar}
+                className={`${iconBtn} hover:bg-ink/[0.05] ${email.isStarred ? starOn : "text-ink-soft hover:text-[#c98a12]"}`}
+                title={email.isStarred ? "取消星标" : "标记星标"}
+                aria-label={email.isStarred ? "取消星标" : "标记星标"}
+                aria-pressed={email.isStarred}
+              >
+                <StarIcon filled={email.isStarred} />
+              </button>
+            )}
             {adminMode && onDelete && (
               <button type="button" onClick={onDelete} className={`${iconBtn} text-ink-soft hover:bg-void/[0.06] hover:text-void`} title="永久删除此邮件" aria-label="删除邮件">
                 <Icon name="trash" className="size-4" />

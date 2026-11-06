@@ -1,15 +1,23 @@
 import { useEffect, useState } from "react";
-import { api, errorMessage, type MyMailbox } from "../api";
+import { api, errorMessage } from "../api";
 import { Icon } from "../components/Icon";
 import { MailViewer } from "../components/MailViewer";
 import { AppShell } from "../components/Shell";
-import { EmptyState, Notice } from "../components/ui";
+import { Badge, EmptyState, Notice } from "../components/ui";
 import { formatDate } from "../session";
 
+type UnifiedMailbox = {
+  provider: "outlook" | "xmail";
+  address: string;
+  assignedAt: string;
+  remark?: string;
+  groupName?: string;
+  status?: "active" | "disabled";
+};
+
 export function UserMailPage() {
-  const [configured, setConfigured] = useState<boolean | null>(null);
-  const [mailboxes, setMailboxes] = useState<MyMailbox[] | null>(null);
-  const [activeAddress, setActiveAddress] = useState<string | null>(null);
+  const [mailboxes, setMailboxes] = useState<UnifiedMailbox[] | null>(null);
+  const [activeBox, setActiveBox] = useState<{ address: string; provider: "outlook" | "xmail" } | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -17,14 +25,35 @@ export function UserMailPage() {
     setLoading(true);
     setError("");
     try {
-      const st = await api.mailStatus();
-      setConfigured(st.configured);
+      const [outlookRes, st] = await Promise.all([
+        api.myOutlookMailboxes().catch(() => ({ mailboxes: [] })),
+        api.mailStatus().catch(() => ({ configured: false })),
+      ]);
+
+      const list: UnifiedMailbox[] = (outlookRes.mailboxes || []).map((m) => ({
+        provider: "outlook" as const,
+        address: m.address,
+        assignedAt: m.assignedAt,
+        remark: m.remark,
+        groupName: m.groupName,
+        status: m.status,
+      }));
+
       if (st.configured) {
-        const r = await api.myMailboxes();
-        setMailboxes(r.mailboxes);
-        if (r.mailboxes.length === 1 && !activeAddress) {
-          setActiveAddress(r.mailboxes[0].address);
+        const xmRes = await api.myMailboxes().catch(() => ({ mailboxes: [] }));
+        for (const m of xmRes.mailboxes || []) {
+          list.push({
+            provider: "xmail" as const,
+            address: m.address,
+            assignedAt: m.assignedAt,
+          });
         }
+      }
+
+      setMailboxes(list);
+      const activeList = list.filter((m) => m.status !== "disabled");
+      if (activeList.length === 1 && !activeBox) {
+        setActiveBox({ address: activeList[0].address, provider: activeList[0].provider });
       }
     } catch (e) {
       setError(errorMessage(e));
@@ -38,7 +67,7 @@ export function UserMailPage() {
   }, []);
 
   return (
-    <AppShell title="我的邮箱" description="查看分配给你的专用收信邮箱、收到的邮件与最新验证码。">
+    <AppShell title="我的邮箱" description="查看管理员分配给你的专用收信邮箱、收到的邮件与最新验证码。">
       {error && (
         <div className="mb-5">
           <Notice>{error}</Notice>
@@ -58,43 +87,64 @@ export function UserMailPage() {
             </div>
           ))}
         </div>
-      ) : configured === false ? (
-        <EmptyState icon="inbox" title="尚未连接 xmail" description="系统管理员尚未配置邮件中台，请稍后再试。" />
-      ) : activeAddress ? (
-        <MailViewer address={activeAddress} onBack={mailboxes && mailboxes.length > 1 ? () => setActiveAddress(null) : undefined} />
-      ) : mailboxes && mailboxes.length === 0 ? (
-        <EmptyState icon="inbox" title="暂无分配的邮箱" description="管理员尚未为你分配任何收信邮箱。分配后你可以在这里查看收到的邮件和最新验证码。" />
+      ) : activeBox ? (
+        <MailViewer
+          address={activeBox.address}
+          provider={activeBox.provider}
+          onBack={mailboxes && mailboxes.length > 1 ? () => setActiveBox(null) : undefined}
+        />
+      ) : !mailboxes || mailboxes.length === 0 ? (
+        <EmptyState
+          icon="inbox"
+          title="暂无分配的邮箱"
+          description="管理员尚未为你分配任何收信邮箱。邮箱只能由管理员在后台分配，分配后你可以在这里查看收到的邮件和最新验证码。"
+        />
       ) : (
         <section aria-labelledby="my-mailboxes-title">
           <div className="mb-3 flex items-baseline justify-between gap-3">
             <h2 id="my-mailboxes-title" className="eyebrow">
-              分配给你的邮箱 · {mailboxes?.length ?? 0}
+              分配给你的邮箱 · {mailboxes.length}
             </h2>
             <p className="hidden text-[0.8125rem] text-ink-soft sm:block">点击进入收件箱</p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
-            {mailboxes?.map((m) => (
-              <button
-                type="button"
-                key={m.address}
-                onClick={() => setActiveAddress(m.address)}
-                className="panel group flex w-full items-center gap-4 p-5 text-left transition-[border-color,box-shadow] hover:border-stamp/40 hover:shadow-[0_0_0_3px_rgb(90_63_192/0.08),var(--shadow-card)]"
-              >
-                <span aria-hidden="true" className="grid size-11 shrink-0 place-items-center rounded-xl border border-stamp/20 bg-stamp/[0.06] text-stamp shadow-xs">
-                  <Icon name="mail" className="size-5" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-mono text-[0.84375rem] font-semibold text-ink" title={m.address}>
-                    {m.address}
+            {mailboxes.map((m) => {
+              const disabled = m.status === "disabled";
+              return (
+                <button
+                  type="button"
+                  key={`${m.provider}:${m.address}`}
+                  disabled={disabled}
+                  onClick={() => setActiveBox({ address: m.address, provider: m.provider })}
+                  className="panel group flex w-full items-center gap-4 p-5 text-left transition-[border-color,box-shadow] hover:border-stamp/40 hover:shadow-[0_0_0_3px_rgb(90_63_192/0.08),var(--shadow-card)] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="grid size-11 shrink-0 place-items-center rounded-xl border border-stamp/20 bg-stamp/[0.06] text-stamp shadow-xs"
+                  >
+                    <Icon name="mail" className="size-5" />
                   </span>
-                  <span className="mt-1 block text-[0.8125rem] text-ink-soft">分配于 {formatDate(m.assignedAt)}</span>
-                </span>
-                <span className="flex shrink-0 items-center gap-1 text-[0.8125rem] font-medium text-stamp">
-                  <span className="hidden sm:inline">进入收件箱</span>
-                  <Icon name="chevron" className="size-4 transition-transform group-hover:translate-x-0.5" />
-                </span>
-              </button>
-            ))}
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="truncate font-mono text-[0.84375rem] font-semibold text-ink" title={m.address}>
+                        {m.address}
+                      </span>
+                      <Badge tone={m.provider === "outlook" ? "stamp" : "plain"}>
+                        {m.provider === "outlook" ? "Outlook" : "xmail"}
+                      </Badge>
+                      {disabled && <Badge tone="void">已停用</Badge>}
+                    </span>
+                    <span className="mt-1 block truncate text-[0.8125rem] text-ink-soft">
+                      {m.remark ? `${m.remark} · ` : ""}分配于 {formatDate(m.assignedAt)}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-1 text-[0.8125rem] font-medium text-stamp">
+                    <span className="hidden sm:inline">{disabled ? "已停用" : "进入收件箱"}</span>
+                    {!disabled && <Icon name="chevron" className="size-4 transition-transform group-hover:translate-x-0.5" />}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </section>
       )}

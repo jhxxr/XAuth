@@ -254,6 +254,135 @@ export const api = {
     request<{ removed: number }>("DELETE", `/api/admin/mail-grants/${encodeURIComponent(address)}`),
   adminMail: <T>(method: string, subpath: string, body?: unknown) =>
     request<T>(method, `/api/admin/mail${subpath.startsWith("/") ? "" : "/"}${subpath}`, body),
+
+  // Outlook Mail - User
+  myOutlookMailboxes: () => request<{ mailboxes: UserOutlookMailbox[] }>("GET", "/api/outlook/mailboxes"),
+  myOutlookEmails: (address: string, method: OutlookMethod = "auto", top = 20) =>
+    request<OutlookEmailsResponse>(
+      "GET",
+      `/api/outlook/mailboxes/${encodeURIComponent(address)}/emails?method=${encodeURIComponent(method)}&top=${top}`,
+    ),
+  myOutlookEmail: (address: string, messageId: string, method = "") =>
+    request<{ email: EmailDetail }>(
+      "GET",
+      `/api/outlook/mailboxes/${encodeURIComponent(address)}/emails/${encodeURIComponent(messageId)}${method ? `?method=${encodeURIComponent(method)}` : ""}`,
+    ),
+
+  // Outlook Mail - Admin
+  outlookGroups: () => request<{ groups: OutlookGroup[] }>("GET", "/api/admin/outlook/groups"),
+  createOutlookGroup: (input: { name: string; description: string; color: string }) =>
+    request<{ group: OutlookGroup }>("POST", "/api/admin/outlook/groups", input),
+  updateOutlookGroup: (id: number, input: { name: string; description: string; color: string }) =>
+    request<{ group: OutlookGroup }>("PATCH", `/api/admin/outlook/groups/${id}`, input),
+  deleteOutlookGroup: (id: number) => request<{ ok: boolean }>("DELETE", `/api/admin/outlook/groups/${id}`),
+  outlookAccounts: (groupId = 0) =>
+    request<{ accounts: OutlookAccount[] }>("GET", `/api/admin/outlook/accounts${groupId > 0 ? `?group_id=${groupId}` : ""}`),
+  outlookAccount: (id: string) =>
+    request<{ account: OutlookAccount }>("GET", `/api/admin/outlook/accounts/${encodeURIComponent(id)}`),
+  importOutlookAccounts: (input: {
+    accountsText: string;
+    groupId: number;
+    remark: string;
+    userIds: string[];
+    overwrite: boolean;
+  }) =>
+    request<{
+      added: number;
+      updated: number;
+      skipped: number;
+      parseErrors?: { line: number; raw: string; reason: string }[];
+    }>("POST", "/api/admin/outlook/accounts/import", input),
+  updateOutlookAccount: (
+    id: string,
+    input: {
+      email?: string;
+      password?: string;
+      clientId?: string;
+      refreshToken?: string;
+      groupId?: number;
+      remark?: string;
+      status?: "active" | "disabled";
+      userIds?: string[];
+    },
+  ) => request<{ account: OutlookAccount }>("PATCH", `/api/admin/outlook/accounts/${encodeURIComponent(id)}`, input),
+  deleteOutlookAccount: (id: string) =>
+    request<{ ok: boolean }>("DELETE", `/api/admin/outlook/accounts/${encodeURIComponent(id)}`),
+  batchDeleteOutlookAccounts: (ids: string[]) =>
+    request<{ deleted: number }>("POST", "/api/admin/outlook/accounts/batch-delete", { ids }),
+  setOutlookGrants: (id: string, userIds: string[]) =>
+    request<{ id: string; email: string; userIds: string[] }>(
+      "PUT",
+      `/api/admin/outlook/accounts/${encodeURIComponent(id)}/grants`,
+      { userIds },
+    ),
+  batchSetOutlookGrants: (accountIds: string[], userIds: string[], mode: "replace" | "append" = "replace") =>
+    request<{ updated: number }>("POST", "/api/admin/outlook/accounts/batch-grants", { accountIds, userIds, mode }),
+  batchMoveOutlookGroup: (accountIds: string[], groupId: number) =>
+    request<{ moved: number }>("POST", "/api/admin/outlook/accounts/batch-group", { accountIds, groupId }),
+  exportOutlookAccounts: (params: { groupIds?: number[]; ids?: string[] } = {}) => {
+    const q = new URLSearchParams();
+    if (params.groupIds && params.groupIds.length > 0) q.set("group_ids", params.groupIds.join(","));
+    if (params.ids && params.ids.length > 0) q.set("ids", params.ids.join(","));
+    const qs = q.toString();
+    return request<{ content: string; count: number; filename: string }>(
+      "GET",
+      `/api/admin/outlook/export${qs ? `?${qs}` : ""}`,
+    );
+  },
+  adminOutlookEmails: (address: string, method: OutlookMethod = "auto", top = 20) =>
+    request<OutlookEmailsResponse>(
+      "GET",
+      `/api/admin/outlook/mailboxes/${encodeURIComponent(address)}/emails?method=${encodeURIComponent(method)}&top=${top}`,
+    ),
+  adminOutlookEmail: (address: string, messageId: string, method = "") =>
+    request<{ email: EmailDetail }>(
+      "GET",
+      `/api/admin/outlook/mailboxes/${encodeURIComponent(address)}/emails/${encodeURIComponent(messageId)}${method ? `?method=${encodeURIComponent(method)}` : ""}`,
+    ),
+};
+
+export type OutlookMethod = "auto" | "graph" | "imap_new" | "imap_old";
+
+export type OutlookGroup = {
+  id: number;
+  name: string;
+  description: string;
+  color: string;
+  accountCount: number;
+  createdAt: string;
+};
+
+export type OutlookAccount = {
+  id: string;
+  email: string;
+  password?: string;
+  hasPassword: boolean;
+  clientId: string;
+  refreshToken?: string;
+  groupId: number;
+  groupName: string;
+  groupColor: string;
+  remark: string;
+  status: "active" | "disabled";
+  createdAt: string;
+  updatedAt: string;
+  userIds: string[];
+};
+
+export type UserOutlookMailbox = {
+  id: string;
+  address: string;
+  remark: string;
+  groupName: string;
+  groupColor: string;
+  status: "active" | "disabled";
+  assignedAt: string;
+};
+
+export type OutlookEmailsResponse = {
+  items: EmailItem[];
+  method: string;
+  latestCode: VerificationCodeResult | null;
 };
 
 export type MyMailbox = {
@@ -273,9 +402,11 @@ export type EmailItem = {
   createdAt: number;
   preview: string;
   verificationCode: string | null;
+  method?: string;
 };
 
 export type EmailDetail = EmailItem & {
+  cc?: string;
   text: string | null;
   hasHtml: boolean;
 };

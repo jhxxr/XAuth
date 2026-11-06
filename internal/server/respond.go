@@ -76,6 +76,13 @@ var errorMessages = map[string]string{
 	"passkey_failed":         "通行密钥验证没有通过，请重试或改用密码。",
 	"passkey_expired":        "这次验证已过期，请重新开始。",
 	"last_login_method":      "这是你最后的登录方式，不能删除。请先设置密码。",
+	"outlook_default_group":  "默认分组不能删除。",
+	"outlook_group_exists":   "该分组名称已存在。",
+	"outlook_account_exists": "该邮箱地址已存在。",
+	"outlook_empty_import":   "未识别到有效的账号，请按“邮箱----密码----client_id----refresh_token”格式每行输入一个。",
+	"outlook_abuse":          "该 Outlook 账号已被微软风控或封禁（service abuse mode）。",
+	"outlook_invalid_grant":  "该 Outlook 账号的 OAuth2 刷新令牌已失效，请检查凭据或尝试切换取信方式。",
+	"outlook_fetch_failed":   "读取 Outlook 邮件失败，请稍后重试。",
 	"internal":               "服务器出错，请稍后再试。",
 }
 

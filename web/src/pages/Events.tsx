@@ -9,7 +9,7 @@ import { eventTypeLabels } from "./AdminOverview";
 function tone(type: string) {
   if (/failure|denied|reuse/.test(type)) return "bg-void";
   if (/delete|retire|signout|revoke|unassign|remove/.test(type)) return "bg-[#c47a1a]";
-  if (type.startsWith("admin.") || type.startsWith("totp.") || type.startsWith("mail.")) return "bg-stamp";
+  if (type.startsWith("admin.") || type.startsWith("totp.") || type.startsWith("mail.") || type.startsWith("outlook.")) return "bg-stamp";
   if (/success|signin|register|verify/.test(type)) return "bg-seal";
   return "bg-ink-faint";
 }

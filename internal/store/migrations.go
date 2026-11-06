@@ -248,4 +248,42 @@ CREATE TABLE invites (
 );
 CREATE INDEX invites_created ON invites(created_at DESC);
 `,
+	// Phase 8: Outlook OAuth2 mailboxes, groups and user grants. Passwords
+	// and refresh tokens are encrypted with AES-256-GCM under "outlook_key".
+	`
+CREATE TABLE outlook_groups (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	name        TEXT NOT NULL UNIQUE,
+	description TEXT NOT NULL DEFAULT '',
+	color       TEXT NOT NULL DEFAULT '#666666',
+	created_at  INTEGER NOT NULL
+);
+
+INSERT INTO outlook_groups (id, name, description, color, created_at)
+VALUES (1, '默认分组', '未分组的邮箱', '#666666', strftime('%s','now'));
+
+CREATE TABLE outlook_accounts (
+	id                      TEXT PRIMARY KEY,
+	email                   TEXT NOT NULL UNIQUE,
+	password_encrypted      BLOB NOT NULL,
+	client_id               TEXT NOT NULL,
+	refresh_token_encrypted BLOB NOT NULL,
+	group_id                INTEGER NOT NULL DEFAULT 1 REFERENCES outlook_groups(id),
+	remark                  TEXT NOT NULL DEFAULT '',
+	status                  TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+	created_by              TEXT NOT NULL DEFAULT '',
+	created_at              INTEGER NOT NULL,
+	updated_at              INTEGER NOT NULL
+);
+CREATE INDEX outlook_accounts_group ON outlook_accounts(group_id);
+
+CREATE TABLE outlook_grants (
+	account_id  TEXT NOT NULL REFERENCES outlook_accounts(id) ON DELETE CASCADE,
+	user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	assigned_by TEXT NOT NULL,
+	assigned_at INTEGER NOT NULL,
+	PRIMARY KEY (account_id, user_id)
+);
+CREATE INDEX outlook_grants_user ON outlook_grants(user_id);
+`,
 }

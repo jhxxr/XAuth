@@ -34,6 +34,10 @@ const (
 	EvMailAssign           = "mail.assign"
 	EvMailUnassign         = "mail.unassign"
 	EvMailAdminView        = "mail.admin_view"
+	EvOutlookImport        = "outlook.import"
+	EvOutlookUpdate        = "outlook.update"
+	EvOutlookDelete        = "outlook.delete"
+	EvOutlookExport        = "outlook.export"
 	EvTotpCreate           = "totp.create"
 	EvTotpUpdate           = "totp.update"
 	EvTotpDelete           = "totp.delete"
@@ -51,9 +55,9 @@ const (
 var EventGroups = map[string][]string{
 	"signin":   {EvLoginSuccess, EvLoginFailure, EvRegister, EvLogout, EvPasswordChange, EvSessionRevoke, EvEmailVerify, EvPasswordResetRequest, EvPasswordReset, EvPasskeyAdd, EvPasskeyRemove, EvAvatarSet, EvAvatarRemove},
 	"apps":     {EvAppSignIn, EvAppDenied, EvGrantRevoke},
-	"admin":    {EvUserCreate, EvUserUpdate, EvUserSignout, EvInviteCreate, EvInviteRevoke, EvSettingsUpdate, EvAppCreate, EvAppUpdate, EvAppDelete, EvAppSecret, EvKeyRotate, EvKeyRetire, EvMailAssign, EvMailUnassign, EvTotpCreate, EvTotpUpdate, EvTotpDelete, EvTotpAssign},
+	"admin":    {EvUserCreate, EvUserUpdate, EvUserSignout, EvInviteCreate, EvInviteRevoke, EvSettingsUpdate, EvAppCreate, EvAppUpdate, EvAppDelete, EvAppSecret, EvKeyRotate, EvKeyRetire, EvMailAssign, EvMailUnassign, EvOutlookImport, EvOutlookUpdate, EvOutlookDelete, EvOutlookExport, EvTotpCreate, EvTotpUpdate, EvTotpDelete, EvTotpAssign},
 	"security": {EvTokenReuse, EvLoginFailure, EvAppDenied},
-	"mail":     {EvMailAssign, EvMailUnassign, EvMailAdminView},
+	"mail":     {EvMailAssign, EvMailUnassign, EvMailAdminView, EvOutlookImport, EvOutlookUpdate, EvOutlookDelete, EvOutlookExport},
 }
 
 // Event is one audit log entry. Names are snapshots taken when the event

@@ -4,6 +4,7 @@ import { Dialog, useToast } from "../components/Dialog";
 import { Icon, type IconName } from "../components/Icon";
 import { MailViewer } from "../components/MailViewer";
 import { AppShell } from "../components/Shell";
+import { OutlookTab } from "./AdminOutlook";
 import {
   Badge,
   Button,
@@ -74,9 +75,10 @@ type SystemLog = {
   createdAt: number;
 };
 
-type Tab = "mailboxes" | "services" | "trash" | "settings";
+type Tab = "outlook" | "mailboxes" | "services" | "trash" | "settings";
 
 const tabDescriptions: Record<Tab, string> = {
+  outlook: "批量导入格式化 Outlook 邮箱、分组管理、导出并分配给 XAuth 用户收信（用户仅可查阅被分配邮箱，无法自行添加）。",
   mailboxes: "管理 xmail 收信邮箱，并分配给 XAuth 用户查看邮件与验证码。",
   services: "全局服务模板可一键关联到各邮箱，方便用户一键直达对应平台的登录入口。",
   trash: "被软删除的邮箱保存在回收站中，可随时恢复或永久彻底删除。",
@@ -110,11 +112,11 @@ function Toolbar({ children, actions }: { children: ReactNode; actions?: ReactNo
 
 export function AdminMailPage() {
   const [configured, setConfigured] = useState<boolean | null>(null);
-  const [tab, setTab] = useState<Tab>("mailboxes");
+  const [tab, setTab] = useState<Tab>("outlook");
   const [error, setError] = useState("");
 
   // Viewing inbox
-  const [viewingInbox, setViewingInbox] = useState<string | null>(null);
+  const [viewingInbox, setViewingInbox] = useState<{ address: string; provider: "xmail" | "outlook" } | null>(null);
 
   useEffect(() => {
     api
@@ -122,23 +124,6 @@ export function AdminMailPage() {
       .then((r) => setConfigured(r.configured))
       .catch((e) => setError(errorMessage(e)));
   }, []);
-
-  if (configured === false) {
-    return (
-      <AppShell title="邮件中台" description="通过 xmail 统一管理收信邮箱、用户分配与验证码。">
-        <EmptyState
-          icon="inbox"
-          title="尚未连接 xmail"
-          description={
-            <>
-              XAuth 尚未配置 xmail。请在服务器环境变量中设置 <code className="rounded bg-ink/[0.06] px-1 py-0.5 font-mono text-[0.71875rem] text-ink">XMAIL_BASE_URL</code> 与{" "}
-              <code className="rounded bg-ink/[0.06] px-1 py-0.5 font-mono text-[0.71875rem] text-ink">XMAIL_API_KEY</code> 后重启 XAuth 服务。
-            </>
-          }
-        />
-      </AppShell>
-    );
-  }
 
   return (
     <AppShell title="邮件中台" description={viewingInbox ? "以管理员身份查看收件箱，查看操作会记入审计日志。" : tabDescriptions[tab]}>
@@ -153,7 +138,8 @@ export function AdminMailPage() {
           <Segmented
             label="邮件中台视图"
             options={[
-              ["mailboxes", "邮箱"],
+              ["outlook", "Outlook 邮箱"],
+              ["mailboxes", "xmail 邮箱"],
               ["services", "服务模板"],
               ["trash", "回收站"],
               ["settings", "邮件设置"],
@@ -165,9 +151,27 @@ export function AdminMailPage() {
       )}
 
       {viewingInbox ? (
-        <MailViewer address={viewingInbox} adminMode onBack={() => setViewingInbox(null)} />
+        <MailViewer
+          address={viewingInbox.address}
+          provider={viewingInbox.provider}
+          adminMode
+          onBack={() => setViewingInbox(null)}
+        />
+      ) : tab === "outlook" ? (
+        <OutlookTab onOpenInbox={(addr) => setViewingInbox({ address: addr, provider: "outlook" })} />
+      ) : configured === false ? (
+        <EmptyState
+          icon="inbox"
+          title="尚未连接 xmail"
+          description={
+            <>
+              XAuth 尚未配置 xmail。请在服务器环境变量中设置 <code className="rounded bg-ink/[0.06] px-1 py-0.5 font-mono text-[0.71875rem] text-ink">XMAIL_BASE_URL</code> 与{" "}
+              <code className="rounded bg-ink/[0.06] px-1 py-0.5 font-mono text-[0.71875rem] text-ink">XMAIL_API_KEY</code>，或在“系统设置”中填写后保存。
+            </>
+          }
+        />
       ) : tab === "mailboxes" ? (
-        <MailboxesTab onOpenInbox={(addr) => setViewingInbox(addr)} />
+        <MailboxesTab onOpenInbox={(addr) => setViewingInbox({ address: addr, provider: "xmail" })} />
       ) : tab === "services" ? (
         <ServicesTab />
       ) : tab === "trash" ? (
