@@ -244,10 +244,8 @@ func (s *Server) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Request
 	if flow != "" {
 		if a, err := s.st.AuthRequestByID(r.Context(), flow); err != nil || a.Status != store.AuthPending {
 			resp.FlowError = "flow_expired"
-		} else if s.approveAppWithAMR(r.Context(), a, wu.User.ID, sess.AuthTime, webauthnAMR) {
-			resp.Redirect = callbackURL(flow)
 		} else {
-			resp.FlowError = "access_denied"
+			resp.Redirect, resp.RequiresConsent, resp.FlowError = s.completeFlow(r.Context(), a, wu.User.ID, sess.AuthTime, webauthnAMR)
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)

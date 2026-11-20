@@ -7,7 +7,7 @@ import { Button, Notice } from "../components/ui";
 import { leave, Link, navigate, useLocation } from "../router";
 import { useSession } from "../session";
 import { getPasskey, supportsPasskeys } from "../webauthn";
-import { ContinueCard, FlowStub, LoginForm } from "./LoginParts";
+import { ConsentCard, ContinueCard, FlowStub, LoginForm } from "./LoginParts";
 
 type Mark = { tone: "issued" | "void"; label: string } | null;
 
@@ -21,7 +21,7 @@ export function LoginPage() {
   const [state, setState] = useState<"loading" | "ready" | "expired">(
     query.get("error") === "flow_expired" ? "expired" : flowId ? "loading" : "ready",
   );
-  const [mode, setMode] = useState<"continue" | "form">("form");
+  const [mode, setMode] = useState<"continue" | "consent" | "form">("form");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [mark, setMark] = useState<Mark>(null);
@@ -32,7 +32,7 @@ export function LoginPage() {
       .flow(flowId)
       .then((f) => {
         setFlow(f);
-        setMode(f.canContinue ? "continue" : "form");
+        setMode(f.canContinue ? (f.requiresConsent ? "consent" : "continue") : "form");
         setState("ready");
       })
       .catch(() => setState("expired"));
@@ -52,6 +52,7 @@ export function LoginPage() {
     }
     setUser(r.user);
     if (r.flowError) setState("expired");
+    else if (flowId && r.requiresConsent) setMode("consent");
     else navigate("/account", { replace: true });
   };
 
@@ -76,7 +77,7 @@ export function LoginPage() {
 
   const host = new URL(session.issuer).host;
   const passProps = flow
-    ? { seed: flow.app.id, eyebrow: "登录到", title: flow.app.name, mark: flow.app.name.slice(0, 1).toUpperCase(), mrzLines: mrz(flow.app.name, flow.app.id) }
+    ? { seed: flow.app.id, eyebrow: mode === "consent" ? "授权给" : "登录到", title: flow.app.name, mark: flow.app.name.slice(0, 1).toUpperCase(), mrzLines: mrz(flow.app.name, flow.app.id) }
     : { seed: session.issuer, eyebrow: "账户通行证", title: "XAuth", mark: "X", mrzLines: mrz(host, host.replace(/\W/g, "")) };
 
   if (state === "expired") {
@@ -112,6 +113,14 @@ export function LoginPage() {
               appName={flow.app.name}
               busy={busy}
               onContinue={() => decide(() => api.continueFlow(flow.id), "issued", "已签发")}
+              onSwitch={() => setMode("form")}
+            />
+          ) : flow && mode === "consent" && user ? (
+            <ConsentCard
+              user={user}
+              appName={flow.app.name}
+              busy={busy}
+              onApprove={() => decide(() => api.continueFlow(flow.id), "issued", "已授权")}
               onSwitch={() => setMode("form")}
             />
           ) : (
@@ -157,9 +166,9 @@ export function LoginPage() {
             <button
               type="button"
               onClick={() => decide(() => api.denyFlow(flow.id), "void", "已取消")}
-              className="mt-4 w-full rounded-lg py-2 text-sm font-medium text-ink-soft hover:text-void"
+              className="mt-4 min-h-11 w-full rounded-lg px-3 py-2 text-sm font-medium text-ink-soft hover:bg-void/[0.05] hover:text-void"
             >
-              取消，返回 {flow.redirectTo}
+              {mode === "consent" ? "拒绝授权并返回" : "取消，返回"} {flow.redirectTo}
             </button>
           )}
         </fieldset>

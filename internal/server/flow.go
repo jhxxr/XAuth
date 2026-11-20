@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -25,16 +26,57 @@ func loginPageURL(id string) string { return "/login?flow=" + url.QueryEscape(id
 // canContinue reports whether the signed-in session may answer the request
 // without asking for the password again.
 func (s *Server) canContinue(info *sessionInfo, a *store.AuthRequest) bool {
-	if info == nil || slices.Contains(a.Prompt, oidc.PromptLogin) {
+	if info == nil {
 		return false
 	}
 	if a.HintSubject != "" && a.HintSubject != info.user.ID {
+		return false
+	}
+	if !a.AuthTime.IsZero() && (a.UserID != info.user.ID || !a.AuthTime.Equal(info.sess.AuthTime)) {
+		return false
+	}
+	// prompt=login requires a fresh login. Once that login succeeded for this
+	// pending request, the same browser may continue to the consent decision.
+	if slices.Contains(a.Prompt, oidc.PromptLogin) && a.AuthTime.IsZero() {
 		return false
 	}
 	if a.MaxAge != nil && s.st.Now().Sub(info.sess.AuthTime) > time.Duration(*a.MaxAge)*time.Second {
 		return false
 	}
 	return true
+}
+
+// requiresConsent reports whether this request needs an explicit approval
+// from the signed-in user. prompt=consent always forces the page; otherwise
+// only scopes not previously approved for this client do.
+func (s *Server) requiresConsent(ctx context.Context, a *store.AuthRequest, userID string) (bool, error) {
+	if slices.Contains(a.Prompt, oidc.PromptConsent) {
+		return true, nil
+	}
+	covered, err := s.st.ConsentCovers(ctx, userID, a.ClientID, a.Scopes)
+	return !covered, err
+}
+
+func (s *Server) completeFlow(ctx context.Context, a *store.AuthRequest, userID string, authTime time.Time, amr []string) (string, bool, string) {
+	c, allowed := s.appAccess(ctx, a, userID)
+	if !allowed {
+		s.denyApp(ctx, a, userID, c)
+		return "", false, "access_denied"
+	}
+	needsConsent, err := s.requiresConsent(ctx, a, userID)
+	if err != nil {
+		return "", false, "internal"
+	}
+	if needsConsent {
+		if err := s.st.AuthenticateAuthRequest(ctx, a.ID, userID, authTime, amr); err != nil {
+			return "", false, "flow_expired"
+		}
+		return "", true, ""
+	}
+	if !s.approveAppWithAMR(ctx, a, userID, authTime, amr) {
+		return "", false, "access_denied"
+	}
+	return callbackURL(a.ID), false, ""
 }
 
 // handleLoginStart is where /authorize sends the browser. A signed-in user
@@ -55,21 +97,46 @@ func (s *Server) handleLoginStart(w http.ResponseWriter, r *http.Request) {
 			op.AuthRequestError(w, r, oidcprovider.AuthRequestAdapter(a), oidc.ErrLoginRequired(), s.provider.OP)
 			return
 		}
+		needsConsent, err := s.requiresConsent(r.Context(), a, info.user.ID)
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		if needsConsent {
+			_ = s.st.DeleteAuthRequest(r.Context(), a.ID)
+			op.AuthRequestError(w, r, oidcprovider.AuthRequestAdapter(a), oidc.ErrInteractionRequired(), s.provider.OP)
+			return
+		}
 		s.approve(w, r, a, info)
 		return
 	}
 	asks := slices.ContainsFunc(a.Prompt, func(p string) bool {
-		return p == oidc.PromptConsent || p == oidc.PromptSelectAccount
+		return p == oidc.PromptSelectAccount
 	})
-	if ok && !asks {
-		s.approve(w, r, a, info)
-		return
+	if ok {
+		needsConsent, err := s.requiresConsent(r.Context(), a, info.user.ID)
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		if !needsConsent && !asks {
+			s.approve(w, r, a, info)
+			return
+		}
+		if err := s.st.AuthenticateAuthRequest(r.Context(), a.ID, info.user.ID, info.sess.AuthTime, a.AMR); err != nil {
+			s.internalError(w, r, err)
+			return
+		}
 	}
 	http.Redirect(w, r, loginPageURL(a.ID), http.StatusFound)
 }
 
 func (s *Server) approve(w http.ResponseWriter, r *http.Request, a *store.AuthRequest, info *sessionInfo) {
-	if !s.approveApp(r.Context(), a, info.user.ID, info.sess.AuthTime) {
+	amr := a.AMR
+	if len(amr) == 0 {
+		amr = passwordAMR
+	}
+	if !s.approveAppWithAMR(r.Context(), a, info.user.ID, info.sess.AuthTime, amr) {
 		http.Redirect(w, r, "/login?error=access_denied", http.StatusFound)
 		return
 	}
@@ -89,13 +156,14 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 type flowJSON struct {
-	ID          string    `json:"id"`
-	App         flowApp   `json:"app"`
-	Scopes      []string  `json:"scopes"`
-	RedirectTo  string    `json:"redirectTo"`
-	LoginHint   string    `json:"loginHint,omitempty"`
-	CanContinue bool      `json:"canContinue"`
-	ExpiresAt   time.Time `json:"expiresAt"`
+	ID              string    `json:"id"`
+	App             flowApp   `json:"app"`
+	Scopes          []string  `json:"scopes"`
+	RedirectTo      string    `json:"redirectTo"`
+	LoginHint       string    `json:"loginHint,omitempty"`
+	CanContinue     bool      `json:"canContinue"`
+	RequiresConsent bool      `json:"requiresConsent"`
+	ExpiresAt       time.Time `json:"expiresAt"`
 }
 
 type flowApp struct {
@@ -136,10 +204,20 @@ func (s *Server) handleFlow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusGone, "flow_expired")
 		return
 	}
+	needsConsent := slices.Contains(a.Prompt, oidc.PromptConsent)
+	if info := sessionFrom(r.Context()); info != nil && s.canContinue(info, a) {
+		var err error
+		needsConsent, err = s.requiresConsent(r.Context(), a, info.user.ID)
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, flowJSON{
 		ID: a.ID, App: flowApp{ID: c.ID, Name: c.Name}, Scopes: a.Scopes,
 		RedirectTo: redirectTarget(a.RedirectURI), LoginHint: a.LoginHint,
-		CanContinue: s.canContinue(sessionFrom(r.Context()), a), ExpiresAt: a.ExpiresAt,
+		CanContinue: s.canContinue(sessionFrom(r.Context()), a), RequiresConsent: needsConsent,
+		ExpiresAt: a.ExpiresAt,
 	})
 }
 
@@ -161,7 +239,11 @@ func (s *Server) handleFlowContinue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "login_required")
 		return
 	}
-	if !s.approveApp(r.Context(), a, info.user.ID, info.sess.AuthTime) {
+	amr := a.AMR
+	if len(amr) == 0 {
+		amr = passwordAMR
+	}
+	if !s.approveAppWithAMR(r.Context(), a, info.user.ID, info.sess.AuthTime, amr) {
 		writeError(w, http.StatusForbidden, "access_denied")
 		return
 	}

@@ -6,10 +6,10 @@ import { Link } from "../router";
 import { displayName } from "../session";
 
 const scopeLabels: Record<string, string> = {
-  openid: "你的账户标识",
-  profile: "名称",
-  email: "邮箱地址",
-  offline_access: "在你离开后保持登录",
+  openid: "XAuth 账户的唯一标识",
+  profile: "名称与用户名（邮箱）",
+  email: "邮箱地址及验证状态",
+  offline_access: "申请刷新令牌以保持登录",
 };
 
 /** The tear-off stub: what the app receives and where the browser goes next. */
@@ -19,7 +19,7 @@ export function FlowStub({ flow }: { flow: Flow }) {
     <div className="grid gap-4 text-sm sm:grid-cols-[1fr_auto] sm:items-end">
       <div>
         <p className="eyebrow">
-          <span className="normal-case">{flow.app.name}</span> 将获得
+          <span className="normal-case">{flow.app.name}</span> 请求访问
         </p>
         <ul className="mt-2.5 space-y-1.5">
           {items.map((s) => (
@@ -56,6 +56,36 @@ export function ContinueCard({ user, appName, busy, onContinue, onSwitch }: Cont
         以此身份继续登录 {appName}
       </Button>
       <button type="button" onClick={onSwitch} className="mt-3 w-full rounded-lg py-2 text-sm font-medium text-ink-soft hover:text-ink">
+        使用其他账户
+      </button>
+    </div>
+  );
+}
+
+type ConsentProps = { user: User; appName: string; busy: boolean; onApprove: () => void; onSwitch: () => void };
+
+export function ConsentCard({ user, appName, busy, onApprove, onSwitch }: ConsentProps) {
+  return (
+    <div>
+      <div className="flex items-center gap-3 border-b border-line pb-4">
+        <Avatar text={displayName(user)} src={user.avatarUrl} size="lg" />
+        <div className="min-w-0">
+          <p className="text-[0.8125rem] font-medium text-ink-soft">使用此账户授权</p>
+          <p className="truncate font-semibold">{displayName(user)}</p>
+          <p className="truncate text-sm text-ink-soft">{user.email}</p>
+        </div>
+      </div>
+      <p className="mt-4 text-sm leading-6 text-ink-soft">
+        同意后，{appName} 可按下方列出的权限读取信息。XAuth 不会向应用提供你的密码。
+      </p>
+      <Button className="mt-5 w-full" busy={busy} onClick={onApprove}>
+        同意并继续
+      </Button>
+      <button
+        type="button"
+        onClick={onSwitch}
+        className="mt-3 min-h-11 w-full rounded-lg px-3 py-2 text-sm font-medium text-ink-soft hover:bg-ink/[0.05] hover:text-ink"
+      >
         使用其他账户
       </button>
     </div>

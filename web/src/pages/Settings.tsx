@@ -411,7 +411,7 @@ function Grants() {
             icon="apps"
             title={row.clientName}
             badge={row.refresh && <Badge tone="stamp">会保持登录</Badge>}
-            meta={<>最近使用 {formatDate(row.lastUsed)}</>}
+            meta={<>{row.hasActiveTokens ? "最近使用" : "授权于"} {formatDate(row.lastUsed)}</>}
             action={<Button variant="ghost" size="sm" className="hover:text-void" onClick={async () => {
               if (!window.confirm(`撤销 ${row.clientName} 的登录？`)) return;
               try { await api.revokeGrant(row.clientId); toast("已撤销授权"); await load(); } catch (e) { setError(errorMessage(e)); }

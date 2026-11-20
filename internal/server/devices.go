@@ -80,11 +80,12 @@ func (s *Server) handleRevokeOtherSessions(w http.ResponseWriter, r *http.Reques
 }
 
 type grantJSON struct {
-	ClientID   string    `json:"clientId"`
-	ClientName string    `json:"clientName"`
-	Scopes     []string  `json:"scopes"`
-	LastUsed   time.Time `json:"lastUsed"`
-	Refresh    bool      `json:"refresh"`
+	ClientID        string    `json:"clientId"`
+	ClientName      string    `json:"clientName"`
+	Scopes          []string  `json:"scopes"`
+	LastUsed        time.Time `json:"lastUsed"`
+	Refresh         bool      `json:"refresh"`
+	HasActiveTokens bool      `json:"hasActiveTokens"`
 }
 
 func (s *Server) handleListGrants(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +100,10 @@ func (s *Server) handleListGrants(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]grantJSON, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, grantJSON{ClientID: row.ClientID, ClientName: row.ClientName, Scopes: nonNil(row.Scopes), LastUsed: row.LastUsed, Refresh: row.Refresh})
+		out = append(out, grantJSON{
+			ClientID: row.ClientID, ClientName: row.ClientName, Scopes: nonNil(row.Scopes),
+			LastUsed: row.LastUsed, Refresh: row.Refresh, HasActiveTokens: row.HasActiveTokens,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"grants": out})
 }

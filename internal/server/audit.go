@@ -22,30 +22,35 @@ func idOf(u *store.User) string {
 	return u.ID
 }
 
-// approveApp records who signed in to the app. It returns false when the
-// user may not use the app or the request was already decided.
-func (s *Server) approveApp(ctx context.Context, a *store.AuthRequest, userID string, authTime time.Time) bool {
-	return s.approveAppWithAMR(ctx, a, userID, authTime, passwordAMR)
+func (s *Server) appAccess(ctx context.Context, a *store.AuthRequest, userID string) (*store.Client, bool) {
+	u, err := s.st.ActiveUser(ctx, userID)
+	if err != nil {
+		return nil, false
+	}
+	c, err := s.st.ClientByID(ctx, a.ClientID)
+	if err != nil {
+		return nil, false
+	}
+	allowed, err := s.st.UserMayUseClient(ctx, u, c)
+	return c, err == nil && allowed
+}
+
+func (s *Server) denyApp(ctx context.Context, a *store.AuthRequest, userID string, c *store.Client) {
+	_ = s.st.DenyAuthRequest(ctx, a.ID)
+	if c != nil {
+		s.audit(ctx, store.Event{Type: store.EvAppDenied, ActorID: userID, SubjectType: "app", SubjectID: c.ID})
+	}
 }
 
 // approveAppWithAMR is approveApp with the authentication method recorded in
 // the authorization request, so ID tokens carry pwd or webauthn.
 func (s *Server) approveAppWithAMR(ctx context.Context, a *store.AuthRequest, userID string, authTime time.Time, amr []string) bool {
-	u, err := s.st.ActiveUser(ctx, userID)
-	if err != nil {
+	c, allowed := s.appAccess(ctx, a, userID)
+	if !allowed {
+		s.denyApp(ctx, a, userID, c)
 		return false
 	}
-	c, err := s.st.ClientByID(ctx, a.ClientID)
-	if err != nil {
-		return false
-	}
-	allowed, err := s.st.UserMayUseClient(ctx, u, c)
-	if err != nil || !allowed {
-		_ = s.st.DenyAuthRequest(ctx, a.ID)
-		s.audit(ctx, store.Event{Type: store.EvAppDenied, ActorID: userID, SubjectType: "app", SubjectID: c.ID})
-		return false
-	}
-	if err := s.st.ApproveAuthRequest(ctx, a.ID, userID, authTime, amr); err != nil {
+	if err := s.st.ApproveAuthRequestWithConsent(ctx, a.ID, userID, authTime, amr, a.Scopes); err != nil {
 		return false
 	}
 	s.audit(ctx, store.Event{Type: store.EvAppSignIn, ActorID: userID, SubjectType: "app", SubjectID: c.ID,

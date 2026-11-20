@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"time"
 )
@@ -102,14 +103,15 @@ func (s *Store) RevokeAdminOnlyGrants(ctx context.Context, userID string) error 
 
 // Grant is an app a user has signed in to that still holds a live token.
 type Grant struct {
-	ClientID   string
-	ClientName string
-	Scopes     []string
-	LastUsed   time.Time
-	Refresh    bool // has an active refresh token, so it stays signed in
+	ClientID        string
+	ClientName      string
+	Scopes          []string
+	LastUsed        time.Time
+	Refresh         bool // has an active refresh token, so it stays signed in
+	HasActiveTokens bool
 }
 
-// ListGrants returns the apps that hold an active token for the user.
+// ListGrants returns the apps that hold an active token or a saved consent for the user.
 func (s *Store) ListGrants(ctx context.Context, userID string) ([]Grant, error) {
 	now := s.unix()
 	rows, err := s.db.QueryContext(ctx, `
@@ -123,8 +125,8 @@ func (s *Store) ListGrants(ctx context.Context, userID string) ([]Grant, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []Grant
+	byClient := make(map[string]int)
 	for rows.Next() {
 		var g Grant
 		var created int64
@@ -133,28 +135,82 @@ func (s *Store) ListGrants(ctx context.Context, userID string) ([]Grant, error) 
 		if err := rows.Scan(&g.ClientID, &g.ClientName, &created, &scopes, &refresh); err != nil {
 			return nil, err
 		}
-		if n := len(out); n > 0 && out[n-1].ClientID == g.ClientID {
-			out[n-1].Refresh = out[n-1].Refresh || refresh == 1
+		if i, ok := byClient[g.ClientID]; ok {
+			out[i].Refresh = out[i].Refresh || refresh == 1
 			continue
 		}
-		g.LastUsed, g.Refresh = fromUnix(created), refresh == 1
+		g.LastUsed, g.Refresh, g.HasActiveTokens = fromUnix(created), refresh == 1, true
 		if err := jsonUnmarshal(scopes, &g.Scopes); err != nil {
 			return nil, err
 		}
+		byClient[g.ClientID] = len(out)
 		out = append(out, g)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	consents, err := s.db.QueryContext(ctx, `
+		SELECT c.id, c.name, g.scopes, g.updated_at
+		FROM oidc_consents g JOIN clients c ON c.id = g.client_id
+		WHERE g.user_id = ?`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer consents.Close()
+	for consents.Next() {
+		var g Grant
+		var scopes string
+		var updated int64
+		if err := consents.Scan(&g.ClientID, &g.ClientName, &scopes, &updated); err != nil {
+			return nil, err
+		}
+		if i, ok := byClient[g.ClientID]; ok {
+			if err := jsonUnmarshal(scopes, &out[i].Scopes); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		g.LastUsed = fromUnix(updated)
+		if err := jsonUnmarshal(scopes, &g.Scopes); err != nil {
+			return nil, err
+		}
+		byClient[g.ClientID] = len(out)
+		out = append(out, g)
+	}
+	if err := consents.Err(); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].LastUsed.Equal(out[j].LastUsed) {
+			return out[i].ClientName < out[j].ClientName
+		}
+		return out[i].LastUsed.After(out[j].LastUsed)
+	})
+	return out, nil
 }
 
 // RevokeGrant revokes every token a client holds for a user.
 func (s *Store) RevokeGrant(ctx context.Context, userID, clientID string) error {
 	now := s.unix()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	for _, table := range []string{"access_tokens", "refresh_tokens"} {
-		if _, err := s.db.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			"UPDATE "+table+" SET revoked_at = ? WHERE user_id = ? AND client_id = ? AND revoked_at IS NULL",
 			now, userID, clientID); err != nil {
 			return err
 		}
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, "DELETE FROM oidc_consents WHERE user_id = ? AND client_id = ?", userID, clientID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

@@ -58,9 +58,10 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 }
 
 type authResponse struct {
-	User      *userJSON `json:"user"`
-	Redirect  string    `json:"redirect,omitempty"`
-	FlowError string    `json:"flowError,omitempty"`
+	User            *userJSON `json:"user"`
+	Redirect        string    `json:"redirect,omitempty"`
+	FlowError       string    `json:"flowError,omitempty"`
+	RequiresConsent bool      `json:"requiresConsent,omitempty"`
 }
 
 // startSession replaces any current session with a new one for userID.
@@ -85,10 +86,8 @@ func (s *Server) finishSignIn(w http.ResponseWriter, r *http.Request, status int
 	if flow != "" {
 		if a, err := s.st.AuthRequestByID(r.Context(), flow); err != nil || a.Status != store.AuthPending {
 			resp.FlowError = "flow_expired"
-		} else if !s.approveApp(r.Context(), a, u.ID, sess.AuthTime) {
-			resp.FlowError = "access_denied"
 		} else {
-			resp.Redirect = callbackURL(flow)
+			resp.Redirect, resp.RequiresConsent, resp.FlowError = s.completeFlow(r.Context(), a, u.ID, sess.AuthTime, passwordAMR)
 		}
 	}
 	writeJSON(w, status, resp)

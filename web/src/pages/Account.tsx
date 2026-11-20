@@ -259,7 +259,7 @@ function SovereignDossierHero({
                           <span className="truncate text-xs font-semibold text-ink">{row.clientName}</span>
                           {row.refresh && <Badge tone="stamp">持久</Badge>}
                         </div>
-                        <p className="mt-0.5 text-[0.6875rem] text-ink-soft">最近使用 {formatDate(row.lastUsed)}</p>
+                        <p className="mt-0.5 text-[0.6875rem] text-ink-soft">{row.hasActiveTokens ? "最近使用" : "授权于"} {formatDate(row.lastUsed)}</p>
                       </div>
                       <Button variant="ghost" size="sm" className="!h-7 !px-2 text-xs hover:text-void" onClick={() => revokeApp(row)}>
                         撤销

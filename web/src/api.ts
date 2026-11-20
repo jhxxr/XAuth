@@ -73,6 +73,7 @@ export type Flow = {
   redirectTo: string;
   loginHint?: string;
   canContinue: boolean;
+  requiresConsent: boolean;
   expiresAt: string;
 };
 
@@ -104,7 +105,7 @@ export type Endpoints = {
   introspection: string;
 };
 
-export type SignInResult = { user: User; redirect?: string; flowError?: string };
+export type SignInResult = { user: User; redirect?: string; flowError?: string; requiresConsent?: boolean };
 
 export class ApiError extends Error {
   constructor(
@@ -441,6 +442,7 @@ export type Grant = {
   scopes: string[];
   lastUsed: string;
   refresh: boolean;
+  hasActiveTokens: boolean;
 };
 
 export type AuditEvent = {

@@ -286,4 +286,17 @@ CREATE TABLE outlook_grants (
 );
 CREATE INDEX outlook_grants_user ON outlook_grants(user_id);
 `,
+	// Phase 9: durable per-user OIDC consent. Revoking an application's
+	// grant removes this record so the next authorization asks again.
+	`
+CREATE TABLE oidc_consents (
+	user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	client_id  TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+	scopes     TEXT NOT NULL DEFAULT '[]',
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL,
+	PRIMARY KEY (user_id, client_id)
+);
+CREATE INDEX oidc_consents_client ON oidc_consents(client_id);
+`,
 }

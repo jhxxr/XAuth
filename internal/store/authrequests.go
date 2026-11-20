@@ -116,6 +116,45 @@ func (s *Store) ApproveAuthRequest(ctx context.Context, id, userID string, authT
 	return affectedOne(res, err)
 }
 
+// ApproveAuthRequestWithConsent atomically records a user's decision and the
+// scopes approved for this client.
+func (s *Store) ApproveAuthRequestWithConsent(ctx context.Context, id, userID string, authTime time.Time, amr, scopes []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var clientID string
+	if err := tx.QueryRowContext(ctx, "SELECT client_id FROM auth_requests WHERE id = ?", id).Scan(&clientID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	res, err := tx.ExecContext(ctx,
+		`UPDATE auth_requests SET status = ?, user_id = ?, auth_time = ?, amr = ?
+		 WHERE id = ? AND status = ? AND expires_at > ?`,
+		AuthApproved, userID, authTime.Unix(), jsonList(amr), id, AuthPending, s.unix())
+	if err := affectedOne(res, err); err != nil {
+		return err
+	}
+	if err := grantConsentTx(ctx, tx, userID, clientID, scopes, s.unix()); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// AuthenticateAuthRequest records a successful account login while keeping
+// the authorization request pending for an explicit consent decision.
+func (s *Store) AuthenticateAuthRequest(ctx context.Context, id, userID string, authTime time.Time, amr []string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE auth_requests SET user_id = ?, auth_time = ?, amr = ?
+		 WHERE id = ? AND status = ? AND expires_at > ?`,
+		userID, authTime.Unix(), jsonList(amr), id, AuthPending, s.unix())
+	return affectedOne(res, err)
+}
+
 // DenyAuthRequest marks a pending request as cancelled by the user.
 func (s *Store) DenyAuthRequest(ctx context.Context, id string) error {
 	res, err := s.db.ExecContext(ctx,

@@ -59,22 +59,55 @@ func (e *env) follow(c *http.Client, u string) *url.URL {
 	return nil
 }
 
-// codeFlow signs in through the login API and returns the code and verifier.
+// codeFlow signs in, approves any first-time consent, and returns the code.
 func (e *env) codeFlow(c *http.Client, clientID, email, pw string) (code, verifier string) {
+	return e.codeFlowWithScopes(c, clientID, email, pw, "openid profile email offline_access")
+}
+
+func (e *env) codeFlowWithScopes(c *http.Client, clientID, email, pw, scopes string) (code, verifier string) {
 	e.t.Helper()
 	verifier, challenge := pkce()
 	login := e.follow(c, e.authorizeURL(authParams{clientID: clientID, redirect: rpCallback,
-		challenge: challenge, method: "S256", scope: "openid profile email offline_access", state: "s1"}))
+		challenge: challenge, method: "S256", scope: scopes, state: "s1"}))
 	if login.Path != "/login" || login.Query().Get("flow") == "" {
 		e.t.Fatalf("expected login page, got %s", login)
 	}
-	var out struct{ Redirect string }
+	var out struct {
+		Redirect        string
+		RequiresConsent bool
+		FlowError       string
+	}
 	r := e.api(c, http.MethodPost, "/api/login", map[string]string{
 		"email": email, "password": pw, "flow": login.Query().Get("flow")})
 	if r.status != http.StatusOK {
 		e.t.Fatalf("login: %d %s", r.status, r.body)
 	}
 	r.json(e.t, &out)
+	if out.FlowError != "" {
+		e.t.Fatalf("login flow: %s", out.FlowError)
+	}
+	if out.RequiresConsent {
+		var flow struct {
+			CanContinue     bool
+			RequiresConsent bool
+		}
+		if r := e.api(c, http.MethodGet, "/api/flow/"+login.Query().Get("flow"), nil); r.status != http.StatusOK {
+			e.t.Fatalf("load consent flow: %d %s", r.status, r.body)
+		} else {
+			r.json(e.t, &flow)
+		}
+		if !flow.CanContinue || !flow.RequiresConsent {
+			e.t.Fatalf("new authorization did not require consent: %+v", flow)
+		}
+		if r := e.api(c, http.MethodPost, "/api/flow/"+login.Query().Get("flow")+"/continue", nil); r.status != http.StatusOK {
+			e.t.Fatalf("approve consent: %d %s", r.status, r.body)
+		} else {
+			r.json(e.t, &out)
+		}
+	}
+	if out.Redirect == "" {
+		e.t.Fatalf("no authorization redirect: %+v", out)
+	}
 	return e.codeFrom(e.follow(c, e.abs(out.Redirect)), "s1"), verifier
 }
 
