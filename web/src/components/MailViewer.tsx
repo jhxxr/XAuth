@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useId } from "react";
-import { api, errorMessage, type EmailDetail, type EmailItem, type OutlookMethod, type VerificationCodeResult } from "../api";
+import { ApiError, api, errorMessage, type EmailDetail, type EmailItem, type OutlookMethod, type VerificationCodeResult } from "../api";
 import { Icon } from "./Icon";
 import { Avatar, Badge, Button, IconTile, Notice, Segmented } from "./ui";
 
@@ -80,6 +80,7 @@ export function MailViewer({ address, provider = "xmail", adminMode = false, onB
   const [outlookMethod, setOutlookMethod] = useState<OutlookMethod>("auto");
   const [usedMethod, setUsedMethod] = useState<string>("");
   const [error, setError] = useState("");
+  const [refreshRequired, setRefreshRequired] = useState(false);
   const [loading, setLoading] = useState(false);
   const [cleaningUp, setCleaningUp] = useState(false);
   const searchId = useId();
@@ -106,6 +107,8 @@ export function MailViewer({ address, provider = "xmail", adminMode = false, onB
   const loadEmails = async () => {
     setLoading(true);
     setError("");
+    setRefreshRequired(false);
+    if (isOutlook) setSelectedEmail(null);
     try {
       if (isOutlook) {
         const res = adminMode
@@ -142,6 +145,7 @@ export function MailViewer({ address, provider = "xmail", adminMode = false, onB
       }
     } catch (err) {
       setError(errorMessage(err));
+      setRefreshRequired(isOutlook && err instanceof ApiError && err.code === "outlook_stale_message");
     } finally {
       setLoading(false);
     }
@@ -214,6 +218,9 @@ export function MailViewer({ address, provider = "xmail", adminMode = false, onB
   };
 
   const viewEmail = async (item: EmailItem) => {
+    setError("");
+    setRefreshRequired(false);
+    setSelectedEmail(null);
     try {
       if (isOutlook) {
         const res = adminMode
@@ -238,6 +245,7 @@ export function MailViewer({ address, provider = "xmail", adminMode = false, onB
       }
     } catch (err) {
       setError(errorMessage(err));
+      setRefreshRequired(isOutlook && err instanceof ApiError && err.code === "outlook_stale_message");
     }
   };
 
@@ -355,7 +363,16 @@ export function MailViewer({ address, provider = "xmail", adminMode = false, onB
         )}
       </div>
 
-      {error && <Notice>{error}</Notice>}
+      {error && (
+        <div className="space-y-2">
+          <Notice>{error}</Notice>
+          {refreshRequired && (
+            <Button variant="secondary" size="sm" busy={loading} onClick={() => void loadEmails()}>
+              刷新收件箱后重新打开
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Latest verification code banner */}
       {code?.code ? (

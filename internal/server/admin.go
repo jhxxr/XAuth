@@ -138,29 +138,17 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		revoke = true
 		changed["password"] = true
 	}
-	if err := s.st.UpdateUser(r.Context(), u); err != nil {
+	keep := ""
+	if self {
+		keep = me.sess.TokenHash
+	}
+	if err := s.st.UpdateUserWithAccessRevocation(r.Context(), u, keep, revoke, wasAdmin && !u.IsAdmin); err != nil {
 		if errors.Is(err, store.ErrLastAdmin) {
 			writeError(w, http.StatusConflict, "last_admin")
 			return
 		}
 		s.internalError(w, r, err)
 		return
-	}
-	if revoke {
-		keep := ""
-		if self {
-			keep = me.sess.TokenHash
-		}
-		if err := s.st.RevokeUserAccess(r.Context(), u.ID, keep); err != nil {
-			s.internalError(w, r, err)
-			return
-		}
-	}
-	if wasAdmin && !u.IsAdmin {
-		if err := s.st.RevokeAdminOnlyGrants(r.Context(), u.ID); err != nil {
-			s.internalError(w, r, err)
-			return
-		}
 	}
 	s.audit(r.Context(), store.Event{Type: store.EvUserUpdate, ActorID: me.user.ID, SubjectType: "user", SubjectID: u.ID,
 		IP: s.clientIP(r), Detail: changed})
@@ -388,27 +376,16 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 		}
 		c.Access = *req.Access
 	}
-	if err := s.st.UpdateClient(r.Context(), c); err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	allowed, err := s.st.ClientUserIDs(r.Context(), c.ID)
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
+	var allowedUserIDs *[]string
 	if c.Access == store.AccessSelected && req.AllowedUserIDs != nil {
-		if err := s.st.SetClientUsers(r.Context(), c.ID, *req.AllowedUserIDs); err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				writeError(w, http.StatusBadRequest, "unknown_user")
-				return
-			}
-			s.internalError(w, r, err)
-			return
-		}
-		allowed = nonNil(*req.AllowedUserIDs)
+		allowedUserIDs = req.AllowedUserIDs
 	}
-	if err := s.st.RevokeDisallowed(r.Context(), c.ID); err != nil {
+	allowed, err := s.st.UpdateClientWithAccess(r.Context(), c, allowedUserIDs)
+	if errors.Is(err, store.ErrNotFound) && allowedUserIDs != nil {
+		writeError(w, http.StatusBadRequest, "unknown_user")
+		return
+	}
+	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}

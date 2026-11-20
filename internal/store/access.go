@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"sort"
 	"strings"
 	"time"
@@ -30,7 +31,15 @@ func (s *Store) UserMayUseClient(ctx context.Context, u *User, c *Client) (bool,
 
 // ClientUserIDs returns the users allowed to use a client in selected mode.
 func (s *Store) ClientUserIDs(ctx context.Context, clientID string) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx,
+	return clientUserIDs(ctx, s.db, clientID)
+}
+
+type queryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func clientUserIDs(ctx context.Context, q queryer, clientID string) ([]string, error) {
+	rows, err := q.QueryContext(ctx,
 		"SELECT cu.user_id FROM client_users cu JOIN users u ON u.id = cu.user_id WHERE cu.client_id = ? ORDER BY u.email", clientID)
 	if err != nil {
 		return nil, err
@@ -55,6 +64,13 @@ func (s *Store) SetClientUsers(ctx context.Context, clientID string, userIDs []s
 		return err
 	}
 	defer tx.Rollback()
+	if err := replaceClientUsers(ctx, tx, clientID, userIDs); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func replaceClientUsers(ctx context.Context, tx *sql.Tx, clientID string, userIDs []string) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM client_users WHERE client_id = ?", clientID); err != nil {
 		return err
 	}
@@ -66,7 +82,7 @@ func (s *Store) SetClientUsers(ctx context.Context, clientID string, userIDs []s
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // disallowed selects users who may not use the client.
@@ -77,8 +93,16 @@ const disallowed = `user_id IN (SELECT u.id FROM users u, clients c WHERE c.id =
 // RevokeDisallowed revokes the tokens of users who lost access to a client.
 func (s *Store) RevokeDisallowed(ctx context.Context, clientID string) error {
 	now := s.unix()
+	return revokeDisallowedTx(ctx, s.db, now, clientID)
+}
+
+type execQueryer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func revokeDisallowedTx(ctx context.Context, q execQueryer, now int64, clientID string) error {
 	for _, table := range []string{"access_tokens", "refresh_tokens"} {
-		if _, err := s.db.ExecContext(ctx,
+		if _, err := q.ExecContext(ctx,
 			"UPDATE "+table+" SET revoked_at = ? WHERE client_id = ? AND revoked_at IS NULL AND "+disallowed,
 			now, clientID, clientID); err != nil {
 			return err
@@ -91,8 +115,20 @@ func (s *Store) RevokeDisallowed(ctx context.Context, clientID string) error {
 // when the user stops being an admin.
 func (s *Store) RevokeAdminOnlyGrants(ctx context.Context, userID string) error {
 	now := s.unix()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := revokeAdminOnlyGrantsTx(ctx, tx, now, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func revokeAdminOnlyGrantsTx(ctx context.Context, tx *sql.Tx, now int64, userID string) error {
 	for _, table := range []string{"access_tokens", "refresh_tokens"} {
-		if _, err := s.db.ExecContext(ctx,
+		if _, err := tx.ExecContext(ctx,
 			"UPDATE "+table+" SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL AND client_id IN (SELECT id FROM clients WHERE access = 'admins')",
 			now, userID); err != nil {
 			return err

@@ -95,12 +95,28 @@ export function OutlookTab({ onOpenInbox }: { onOpenInbox: (addr: string) => voi
     });
   }, [accounts, activeGroupId, search, filterStatus]);
 
-  const allChecked = !!filtered && filtered.length > 0 && selected.length === filtered.length;
+  const visibleIds = filtered?.map((account) => account.id) ?? [];
+  const visibleIdSet = new Set(visibleIds);
+  const visibleSelected = selected.filter((id) => visibleIdSet.has(id));
+  const allChecked = visibleIds.length > 0 && visibleSelected.length === visibleIds.length;
 
-  const toggleSelectAll = () => {
+  const changeGroup = (id: number) => {
+    setSelected([]);
+    setActiveGroupId(id);
+  };
+  const changeSearch = (value: string) => {
+    setSelected([]);
+    setSearch(value);
+  };
+  const changeFilterStatus = (value: typeof filterStatus) => {
+    setSelected([]);
+    setFilterStatus(value);
+  };
+
+  const toggleSelectAll = (checked: boolean) => {
     if (!filtered) return;
-    if (allChecked) setSelected([]);
-    else setSelected(filtered.map((a) => a.id));
+    if (!checked) setSelected((prev) => prev.filter((id) => !visibleIdSet.has(id)));
+    else setSelected((prev) => [...new Set([...prev, ...visibleIds])]);
   };
 
   const toggleSelectOne = (id: string) => {
@@ -119,9 +135,10 @@ export function OutlookTab({ onOpenInbox }: { onOpenInbox: (addr: string) => voi
   };
 
   const handleBatchDelete = async () => {
-    if (!window.confirm(`确定删除选中的 ${selected.length} 个 Outlook 邮箱？`)) return;
+    const accountIds = visibleSelected;
+    if (accountIds.length === 0 || !window.confirm(`确定删除当前筛选结果中选中的 ${accountIds.length} 个 Outlook 邮箱？`)) return;
     try {
-      const res = await api.batchDeleteOutlookAccounts(selected);
+      const res = await api.batchDeleteOutlookAccounts(accountIds);
       toast(`已批量删除 ${res.deleted} 个邮箱`);
       void loadData();
     } catch (e) {
@@ -149,6 +166,7 @@ export function OutlookTab({ onOpenInbox }: { onOpenInbox: (addr: string) => voi
     try {
       await api.deleteOutlookGroup(g.id);
       toast(`已删除分组「${g.name}」`);
+      setSelected([]);
       setActiveGroupId(0);
       void loadData();
     } catch (e) {
@@ -165,7 +183,7 @@ export function OutlookTab({ onOpenInbox }: { onOpenInbox: (addr: string) => voi
         <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
-            onClick={() => setActiveGroupId(0)}
+            onClick={() => changeGroup(0)}
             className={`inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-xs font-medium transition-colors ${
               activeGroupId === 0
                 ? "border-ink bg-ink text-paper shadow-xs"
@@ -183,7 +201,7 @@ export function OutlookTab({ onOpenInbox }: { onOpenInbox: (addr: string) => voi
               <button
                 key={g.id}
                 type="button"
-                onClick={() => setActiveGroupId(g.id)}
+                onClick={() => changeGroup(g.id)}
                 title={g.description || g.name}
                 className={`inline-flex h-8 items-center gap-2 rounded-lg border px-3 text-xs font-medium transition-colors ${
                   active
@@ -226,7 +244,7 @@ export function OutlookTab({ onOpenInbox }: { onOpenInbox: (addr: string) => voi
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <SearchField
             value={search}
-            onChange={setSearch}
+            onChange={changeSearch}
             placeholder="搜索 Outlook 邮箱地址、备注..."
             label="搜索 Outlook 邮箱"
             className="w-full sm:w-64"
@@ -241,7 +259,7 @@ export function OutlookTab({ onOpenInbox }: { onOpenInbox: (addr: string) => voi
               ["unassigned", "未分配"],
             ]}
             value={filterStatus}
-            onChange={setFilterStatus}
+            onChange={changeFilterStatus}
           />
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -262,10 +280,10 @@ export function OutlookTab({ onOpenInbox }: { onOpenInbox: (addr: string) => voi
       </div>
 
       {/* Batch Selection Bar */}
-      {selected.length > 0 && (
+      {visibleSelected.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-stamp/30 bg-stamp/[0.05] px-4 py-2.5">
           <span className="text-[0.8125rem] font-medium text-ink">
-            已选中 <strong className="font-semibold text-stamp tabular-nums">{selected.length}</strong> 个 Outlook 邮箱
+            当前筛选中已选中 <strong className="font-semibold text-stamp tabular-nums">{visibleSelected.length}</strong> 个 Outlook 邮箱
           </span>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="secondary" size="sm" onClick={() => setBatchAssigning(true)}>
@@ -275,7 +293,7 @@ export function OutlookTab({ onOpenInbox }: { onOpenInbox: (addr: string) => voi
             <Button variant="secondary" size="sm" onClick={() => setBatchMovingGroup(true)}>
               移至分组
             </Button>
-            <Button variant="secondary" size="sm" onClick={() => void handleExport({ ids: selected })}>
+            <Button variant="secondary" size="sm" onClick={() => void handleExport({ ids: visibleSelected })}>
               <Icon name="download" className="size-3.5" />
               导出选中
             </Button>
@@ -327,7 +345,7 @@ export function OutlookTab({ onOpenInbox }: { onOpenInbox: (addr: string) => voi
                     aria-label="全选当前列表"
                     className="size-4 accent-ink"
                     checked={allChecked}
-                    onChange={toggleSelectAll}
+                    onChange={(event) => toggleSelectAll(event.target.checked)}
                   />
                 </th>
                 <th>Outlook 邮箱</th>
@@ -518,12 +536,12 @@ export function OutlookTab({ onOpenInbox }: { onOpenInbox: (addr: string) => voi
         open={batchAssigning}
         onClose={() => setBatchAssigning(false)}
         wide
-        title={`批量分配 ${selected.length} 个 Outlook 邮箱`}
+        title={`批量分配 ${visibleSelected.length} 个 Outlook 邮箱`}
         description="被分配的用户可以在「我的邮箱」中只读查看这些邮箱的收件箱与验证码。"
       >
         {batchAssigning && (
           <BatchAssignForm
-            accountIds={selected}
+            accountIds={visibleSelected}
             users={users}
             onCancel={() => setBatchAssigning(false)}
             onSuccess={(n) => {
@@ -539,11 +557,11 @@ export function OutlookTab({ onOpenInbox }: { onOpenInbox: (addr: string) => voi
       <Dialog
         open={batchMovingGroup}
         onClose={() => setBatchMovingGroup(false)}
-        title={`移动 ${selected.length} 个邮箱到分组`}
+        title={`移动 ${visibleSelected.length} 个邮箱到分组`}
       >
         {batchMovingGroup && (
           <BatchMoveGroupForm
-            accountIds={selected}
+            accountIds={visibleSelected}
             groups={groups}
             onCancel={() => setBatchMovingGroup(false)}
             onSuccess={(n) => {

@@ -83,6 +83,7 @@ var errorMessages = map[string]string{
 	"outlook_abuse":          "该 Outlook 账号已被微软风控或封禁（service abuse mode）。",
 	"outlook_invalid_grant":  "该 Outlook 账号的 OAuth2 刷新令牌已失效，请检查凭据或尝试切换取信方式。",
 	"outlook_fetch_failed":   "读取 Outlook 邮件失败，请稍后重试。",
+	"outlook_stale_message":  "这封邮件已不在当前列表中，请刷新收件箱后重新打开。",
 	"internal":               "服务器出错，请稍后再试。",
 }
 

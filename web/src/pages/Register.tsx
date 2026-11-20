@@ -73,7 +73,7 @@ export function RegisterPage() {
       }
       setUser(r.user);
       if (r.requiresConsent && flowId) navigate(`/login?flow=${encodeURIComponent(flowId)}`, { replace: true });
-      else navigate(r.flowError ? "/login?error=flow_expired" : "/account", { replace: true });
+      else navigate(r.flowError ? `/login?error=${encodeURIComponent(r.flowError)}${flowId ? `&flow=${encodeURIComponent(flowId)}` : ""}` : "/account", { replace: true });
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);

@@ -41,6 +41,9 @@ func TestCodeFlowRefreshAndReuse(t *testing.T) {
 	if !audContains(claims["aud"], app.ID) {
 		t.Fatalf("aud %v does not contain %s", claims["aud"], app.ID)
 	}
+	if methods, ok := claims["amr"].([]any); !ok || len(methods) != 1 || methods[0] != "pwd" {
+		t.Fatalf("ID token did not report the password authentication method: %v", claims["amr"])
+	}
 
 	status, info := e.userinfo(tok.AccessToken)
 	if status != http.StatusOK || info["sub"] != u.ID || info["email"] != u.Email || info["name"] != u.Name {

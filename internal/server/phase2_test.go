@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"xauth/internal/store"
@@ -104,6 +105,47 @@ func TestNarrowingAccessRevokesTokens(t *testing.T) {
 	}
 	if status, _ := e.refresh(app.ID, secret, tok.RefreshToken); status == http.StatusOK {
 		t.Fatal("refresh token still works after the user lost access")
+	}
+}
+
+func TestAppAccessUpdateRollsBackWhenAllowListIsInvalid(t *testing.T) {
+	e := newEnv(t)
+	admin := e.user("atomic-root@example.com", "correct horse", true)
+	u := e.user("atomic-user@example.com", "correct horse", false)
+	app, secret := e.app(store.ClientWeb, rpCallback)
+	code, verifier := e.codeFlow(e.browser(), app.ID, u.Email, "correct horse")
+	status, tokens := e.exchange(app.ID, secret, code, verifier)
+	if status != http.StatusOK || tokens.AccessToken == "" || tokens.RefreshToken == "" {
+		t.Fatalf("issue original app tokens: status=%d %+v", status, tokens)
+	}
+
+	adminBrowser := e.browser()
+	login(e, adminBrowser, admin.Email, "correct horse")
+	r := e.api(adminBrowser, http.MethodPatch, "/api/admin/apps/"+app.ID, map[string]any{
+		"name":           "Partially updated",
+		"allowRefresh":   false,
+		"access":         "selected",
+		"allowedUserIds": []string{"does-not-exist"},
+	})
+	if r.status != http.StatusBadRequest || !strings.Contains(string(r.body), "unknown_user") {
+		t.Fatalf("invalid allow-list update: %d %s", r.status, r.body)
+	}
+
+	stored, err := e.st.ClientByID(t.Context(), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Name != app.Name || stored.Access != store.AccessAll || !stored.AllowRefresh {
+		t.Fatalf("failed update partially changed the app: %+v", stored)
+	}
+	if allowed, err := e.st.ClientUserIDs(t.Context(), app.ID); err != nil || len(allowed) != 0 {
+		t.Fatalf("failed update changed the allow-list: %v (err=%v)", allowed, err)
+	}
+	if status, _ := e.userinfo(tokens.AccessToken); status != http.StatusOK {
+		t.Fatalf("failed update revoked the access token: status=%d", status)
+	}
+	if status, rotated := e.refresh(app.ID, secret, tokens.RefreshToken); status != http.StatusOK || rotated.RefreshToken == "" {
+		t.Fatalf("failed update revoked the refresh token: status=%d %+v", status, rotated)
 	}
 }
 

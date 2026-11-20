@@ -34,6 +34,7 @@ type AuthRequest struct {
 	HintSubject     string
 	Status          string
 	UserID          string
+	SessionID       string
 	AuthTime        time.Time
 	AMR             []string
 	CreatedAt       time.Time
@@ -42,7 +43,7 @@ type AuthRequest struct {
 
 const authCols = `id, client_id, redirect_uri, scopes, state, nonce, response_type, response_mode,
 	code_challenge, challenge_method, prompt, max_age, login_hint, hint_subject, status,
-	user_id, auth_time, amr, created_at, expires_at`
+	user_id, session_id, auth_time, amr, created_at, expires_at`
 
 func scanAuthRequest(row interface{ Scan(...any) error }) (*AuthRequest, error) {
 	var a AuthRequest
@@ -53,7 +54,7 @@ func scanAuthRequest(row interface{ Scan(...any) error }) (*AuthRequest, error) 
 	var created, expires int64
 	err := row.Scan(&a.ID, &a.ClientID, &a.RedirectURI, &scopes, &a.State, &a.Nonce, &a.ResponseType, &a.ResponseMode,
 		&a.CodeChallenge, &a.ChallengeMethod, &prompt, &maxAge, &a.LoginHint, &a.HintSubject, &a.Status,
-		&userID, &authTime, &amr, &created, &expires)
+		&userID, &a.SessionID, &authTime, &amr, &created, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -147,11 +148,11 @@ func (s *Store) ApproveAuthRequestWithConsent(ctx context.Context, id, userID st
 
 // AuthenticateAuthRequest records a successful account login while keeping
 // the authorization request pending for an explicit consent decision.
-func (s *Store) AuthenticateAuthRequest(ctx context.Context, id, userID string, authTime time.Time, amr []string) error {
+func (s *Store) AuthenticateAuthRequest(ctx context.Context, id string, session *Session) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE auth_requests SET user_id = ?, auth_time = ?, amr = ?
+		`UPDATE auth_requests SET user_id = ?, session_id = ?, auth_time = ?, amr = ?
 		 WHERE id = ? AND status = ? AND expires_at > ?`,
-		userID, authTime.Unix(), jsonList(amr), id, AuthPending, s.unix())
+		session.UserID, session.ID, session.AuthTime.Unix(), jsonList(session.AMR), id, AuthPending, s.unix())
 	return affectedOne(res, err)
 }
 

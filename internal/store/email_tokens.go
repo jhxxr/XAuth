@@ -69,6 +69,53 @@ func (s *Store) ConsumeEmailToken(ctx context.Context, token, purpose string) (s
 	return userID, tx.Commit()
 }
 
+// ResetPasswordWithEmailToken atomically consumes a reset link, replaces the
+// password, and revokes every existing session and token.
+func (s *Store) ResetPasswordWithEmailToken(ctx context.Context, token, hash string) (*User, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	now, tokenHash := s.unix(), HashToken(token)
+	var userID string
+	var expires int64
+	var used sql.NullInt64
+	err = tx.QueryRowContext(ctx,
+		"SELECT user_id, expires_at, used_at FROM email_tokens WHERE token_hash = ? AND purpose = ?",
+		tokenHash, EmailReset).Scan(&userID, &expires, &used)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && expires <= now) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if used.Valid {
+		return nil, ErrLinkUsed
+	}
+	res, err := tx.ExecContext(ctx,
+		"UPDATE email_tokens SET used_at = ? WHERE token_hash = ? AND purpose = ? AND used_at IS NULL AND expires_at > ?",
+		now, tokenHash, EmailReset, now)
+	if err := affectedOne(res, err); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrLinkUsed
+		}
+		return nil, err
+	}
+	if err := setPasswordAndRevokeTx(ctx, tx, now, userID, hash, ""); err != nil {
+		return nil, err
+	}
+	u, err := scanUser(tx.QueryRowContext(ctx, userSelect+" WHERE id = ?", userID))
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
 // SetEmailVerified marks a user's address confirmed.
 func (s *Store) SetEmailVerified(ctx context.Context, userID string) error {
 	res, err := s.db.ExecContext(ctx, "UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?", s.unix(), userID)

@@ -144,12 +144,43 @@ func (s *Store) UpdateUser(ctx context.Context, u *User) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err := updateUserTx(ctx, tx, s.unix(), u); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// UpdateUserWithAccessRevocation commits user policy and all affected tokens
+// and sessions as a single database transaction.
+func (s *Store) UpdateUserWithAccessRevocation(ctx context.Context, u *User, keepSessionHash string, revokeAll, revokeAdminApps bool) error {
+	now := s.unix()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := updateUserTx(ctx, tx, now, u); err != nil {
+		return err
+	}
+	if revokeAll {
+		if err := revokeUserAccessTx(ctx, tx, now, u.ID, keepSessionHash); err != nil {
+			return err
+		}
+	}
+	if revokeAdminApps {
+		if err := revokeAdminOnlyGrantsTx(ctx, tx, now, u.ID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func updateUserTx(ctx context.Context, tx *sql.Tx, now int64, u *User) error {
 	const countAdmins = "SELECT COUNT(*) FROM users WHERE is_admin = 1 AND disabled = 0"
 	var before, after int
 	if err := tx.QueryRowContext(ctx, countAdmins).Scan(&before); err != nil {
 		return err
 	}
-	now := s.unix()
 	res, err := tx.ExecContext(ctx,
 		`UPDATE users SET name = ?, password_hash = ?, email_verified = ?, is_admin = ?, disabled = ?, updated_at = ?
 		 WHERE id = ?`,
@@ -167,19 +198,56 @@ func (s *Store) UpdateUser(ctx context.Context, u *User) error {
 		return ErrLastAdmin
 	}
 	u.UpdatedAt = fromUnix(now)
-	return tx.Commit()
+	return nil
 }
 
 // RevokeUserAccess deletes all sessions of a user, optionally keeping one,
 // and revokes all of the user's tokens.
 func (s *Store) RevokeUserAccess(ctx context.Context, userID, keepSessionHash string) error {
 	now := s.unix()
-	if _, err := s.db.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?", userID, keepSessionHash); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, "UPDATE access_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", now, userID); err != nil {
+	defer tx.Rollback()
+	if err := revokeUserAccessTx(ctx, tx, now, userID, keepSessionHash); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, "UPDATE refresh_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", now, userID)
+	return tx.Commit()
+}
+
+// ChangePasswordAndRevokeAccess updates credentials and ends every other
+// session and token family as one indivisible change.
+func (s *Store) ChangePasswordAndRevokeAccess(ctx context.Context, userID, hash, keepSessionHash string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := setPasswordAndRevokeTx(ctx, tx, s.unix(), userID, hash, keepSessionHash); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func setPasswordAndRevokeTx(ctx context.Context, tx *sql.Tx, now int64, userID, hash, keepSessionHash string) error {
+	res, err := tx.ExecContext(ctx, "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?", hash, now, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return revokeUserAccessTx(ctx, tx, now, userID, keepSessionHash)
+}
+
+func revokeUserAccessTx(ctx context.Context, tx *sql.Tx, now int64, userID, keepSessionHash string) error {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?", userID, keepSessionHash); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE access_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", now, userID); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, "UPDATE refresh_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", now, userID)
 	return err
 }

@@ -44,6 +44,11 @@ var (
 	ErrInvalidGrant = errors.New("OAuth2 刷新令牌无效或已过期")
 	// ErrNotFound indicates the requested email message was not found.
 	ErrNotFound = errors.New("找不到该邮件")
+	// ErrStaleMessageID indicates an old IMAP sequence-number link or a link
+	// from before the mailbox's UIDVALIDITY changed.
+	ErrStaleMessageID = errors.New("邮件列表已更新，请刷新后重新打开")
+	// ErrIMAPUIDValidity indicates the IMAP server did not provide a mailbox UIDVALIDITY.
+	ErrIMAPUIDValidity = errors.New("IMAP 邮箱没有返回稳定的 UIDVALIDITY")
 )
 
 // Credentials holds the OAuth2 credentials of one Outlook mailbox.
@@ -180,10 +185,6 @@ func (c *Client) ListMessages(ctx context.Context, creds Credentials, method str
 // GetMessage retrieves the full detail of a single message.
 func (c *Client) GetMessage(ctx context.Context, creds Credentials, messageID, method string) (*MessageDetail, error) {
 	creds.Email = NormalizeEmail(creds.Email)
-	if cached, ok := c.getCachedMessage(creds.Email, messageID); ok {
-		return &cached, nil
-	}
-
 	prefix, rawID := splitMessageID(messageID)
 	if prefix != "" {
 		method = prefix
@@ -199,6 +200,25 @@ func (c *Client) GetMessage(ctx context.Context, creds Credentials, messageID, m
 		methods = []string{MethodIMAPOld}
 	default:
 		methods = []string{MethodGraph, MethodIMAPNew, MethodIMAPOld}
+	}
+	cacheMethod := method
+	if cacheMethod == "" || cacheMethod == MethodAuto {
+		cacheMethod = "auto"
+	}
+	stableIMAPID := strings.HasPrefix(messageID, "in:") || strings.HasPrefix(messageID, "io:")
+	if !stableIMAPID {
+		if cached, ok := c.getCachedMessage(creds.Email, cacheMethod, messageID); ok {
+			return &cached, nil
+		}
+	}
+	if stableIMAPID {
+		imapMethod, validity, uid, stable := splitIMAPMessageID(messageID)
+		if !stable {
+			return nil, ErrStaleMessageID
+		}
+		method = imapMethod
+		rawID = validity + ":" + uid
+		methods = []string{method}
 	}
 
 	var lastErr error
@@ -216,9 +236,9 @@ func (c *Client) GetMessage(ctx context.Context, creds Credentials, messageID, m
 			detail, err = c.getIMAPMessage(ctx, creds, MethodIMAPOld, c.IMAPServerOld, rawID)
 		}
 		if err == nil && detail != nil {
-			c.putCachedMessage(creds.Email, detail.ID, *detail)
+			c.putCachedMessage(creds.Email, method, detail.ID, *detail)
 			if detail.ID != messageID {
-				c.putCachedMessage(creds.Email, messageID, *detail)
+				c.putCachedMessage(creds.Email, cacheMethod, messageID, *detail)
 			}
 			return detail, nil
 		}
@@ -355,8 +375,8 @@ func (c *Client) getAccessToken(ctx context.Context, creds Credentials, method s
 	return parsed.AccessToken, nil
 }
 
-func (c *Client) getCachedMessage(mailbox, id string) (MessageDetail, bool) {
-	key := mailbox + "|" + id
+func (c *Client) getCachedMessage(mailbox, method, id string) (MessageDetail, bool) {
+	key := mailbox + "|" + method + "|" + id
 	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -366,8 +386,8 @@ func (c *Client) getCachedMessage(mailbox, id string) (MessageDetail, bool) {
 	return MessageDetail{}, false
 }
 
-func (c *Client) putCachedMessage(mailbox, id string, detail MessageDetail) {
-	key := mailbox + "|" + id
+func (c *Client) putCachedMessage(mailbox, method, id string, detail MessageDetail) {
+	key := mailbox + "|" + method + "|" + id
 	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -607,13 +627,17 @@ func formatGraphRecipients(list []graphRecipient) string {
 // ==================== Method 2 & 3: IMAP XOAUTH2 ====================
 
 var reLiteralSize = regexp.MustCompile(`\{(\d+)\}\r?\n$`)
+var reFetchUID = regexp.MustCompile(`(?i)(?:^|[ (])UID\s+([0-9]+)(?:[ )\r\n]|$)`)
 
 type imapConn struct {
-	conn       net.Conn
-	br         *bufio.Reader
-	seq        int
-	stopCancel func() bool
+	conn        net.Conn
+	br          *bufio.Reader
+	seq         int
+	uidValidity string
+	stopCancel  func() bool
 }
+
+var reUIDValidity = regexp.MustCompile(`(?i)\[UIDVALIDITY\s+([1-9][0-9]*)\]`)
 
 func dialIMAP(ctx context.Context, addr string, tlsCfg *tls.Config) (*imapConn, error) {
 	dialer := &net.Dialer{Timeout: 15 * time.Second}
@@ -721,8 +745,14 @@ func (ic *imapConn) selectInbox() error {
 		if err != nil {
 			return err
 		}
+		if m := reUIDValidity.FindStringSubmatch(line); len(m) == 2 {
+			ic.uidValidity = m[1]
+		}
 		if strings.HasPrefix(line, tag+" ") {
 			if strings.HasPrefix(line, tag+" OK") {
+				if ic.uidValidity == "" {
+					return ErrIMAPUIDValidity
+				}
 				return nil
 			}
 			return fmt.Errorf("IMAP SELECT INBOX 失败：%s", strings.TrimSpace(line[len(tag)+1:]))
@@ -732,7 +762,7 @@ func (ic *imapConn) selectInbox() error {
 
 func (ic *imapConn) searchAll() ([]string, error) {
 	tag := ic.nextTag()
-	if _, err := fmt.Fprintf(ic.conn, "%s SEARCH ALL\r\n", tag); err != nil {
+	if _, err := fmt.Fprintf(ic.conn, "%s UID SEARCH ALL\r\n", tag); err != nil {
 		return nil, err
 	}
 	var ids []string
@@ -758,16 +788,22 @@ func (ic *imapConn) searchAll() ([]string, error) {
 	}
 }
 
-func (ic *imapConn) fetchRFC822(seqID string) ([]byte, error) {
+func (ic *imapConn) fetchRFC822(uid string) ([]byte, error) {
 	tag := ic.nextTag()
-	if _, err := fmt.Fprintf(ic.conn, "%s FETCH %s (BODY.PEEK[])\r\n", tag, seqID); err != nil {
+	if _, err := fmt.Fprintf(ic.conn, "%s UID FETCH %s (UID BODY.PEEK[])\r\n", tag, uid); err != nil {
 		return nil, err
 	}
 	var raw []byte
+	var responseUID string
 	for {
 		line, err := ic.readLine()
 		if err != nil {
 			return nil, err
+		}
+		if strings.Contains(strings.ToUpper(line), "FETCH") {
+			if m := reFetchUID.FindStringSubmatch(line); len(m) == 2 {
+				responseUID = m[1]
+			}
 		}
 		if m := reLiteralSize.FindStringSubmatch(line); len(m) == 2 {
 			size, err := strconv.Atoi(m[1])
@@ -786,11 +822,37 @@ func (ic *imapConn) fetchRFC822(seqID string) ([]byte, error) {
 				if raw == nil {
 					return nil, ErrNotFound
 				}
+				if responseUID != uid {
+					return nil, ErrStaleMessageID
+				}
 				return raw, nil
 			}
 			return nil, fmt.Errorf("IMAP FETCH 失败：%s", strings.TrimSpace(line[len(tag)+1:]))
 		}
 	}
+}
+
+func prefixForIMAPUID(method, validity, uid string) string {
+	return prefixForMethod(method, validity+":"+uid)
+}
+
+func splitIMAPMessageID(id string) (method, validity, uid string, ok bool) {
+	method, raw := splitMessageID(id)
+	if method != MethodIMAPNew && method != MethodIMAPOld {
+		return "", "", "", false
+	}
+	validity, uid, ok = strings.Cut(raw, ":")
+	if !ok || validity == "" || uid == "" {
+		return method, "", "", false
+	}
+	for _, part := range []string{validity, uid} {
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return method, "", "", false
+			}
+		}
+	}
+	return method, validity, uid, true
 }
 
 func (c *Client) listIMAP(ctx context.Context, creds Credentials, method, serverAddr string, top int) ([]MessageItem, error) {
@@ -826,33 +888,47 @@ func (c *Client) listIMAP(ctx context.Context, creds Credentials, method, server
 
 	items := make([]MessageItem, 0, len(recent))
 	for i := len(recent) - 1; i >= 0; i-- {
-		seqID := recent[i]
-		fullID := prefixForMethod(method, seqID)
-		if cached, ok := c.getCachedMessage(creds.Email, fullID); ok {
+		uid := recent[i]
+		if !decimalID(uid) {
+			continue
+		}
+		fullID := prefixForIMAPUID(method, ic.uidValidity, uid)
+		if cached, ok := c.getCachedMessage(creds.Email, method, fullID); ok {
 			items = append(items, cached.MessageItem)
 			continue
 		}
-		raw, err := ic.fetchRFC822(seqID)
+		raw, err := ic.fetchRFC822(uid)
 		if err != nil {
+			if errors.Is(err, ErrStaleMessageID) {
+				return nil, err
+			}
 			continue
 		}
 		detail := ParseRFC822(fullID, creds.Email, method, raw)
-		c.putCachedMessage(creds.Email, fullID, detail)
+		c.putCachedMessage(creds.Email, method, fullID, detail)
 		items = append(items, detail.MessageItem)
 	}
 	return items, nil
 }
 
-func (c *Client) getIMAPMessage(ctx context.Context, creds Credentials, method, serverAddr, seqID string) (*MessageDetail, error) {
-	for _, r := range seqID {
+func decimalID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, r := range id {
 		if r < '0' || r > '9' {
-			return nil, ErrNotFound
+			return false
 		}
 	}
-	fullID := prefixForMethod(method, seqID)
-	if cached, ok := c.getCachedMessage(creds.Email, fullID); ok {
-		return &cached, nil
+	return true
+}
+
+func (c *Client) getIMAPMessage(ctx context.Context, creds Credentials, method, serverAddr, imapID string) (*MessageDetail, error) {
+	validity, uid, ok := strings.Cut(imapID, ":")
+	if !ok || !decimalID(validity) || !decimalID(uid) {
+		return nil, ErrStaleMessageID
 	}
+	fullID := prefixForIMAPUID(method, validity, uid)
 
 	token, err := c.getAccessToken(ctx, creds, method)
 	if err != nil {
@@ -870,11 +946,20 @@ func (c *Client) getIMAPMessage(ctx context.Context, creds Credentials, method, 
 	if err := ic.selectInbox(); err != nil {
 		return nil, err
 	}
-	raw, err := ic.fetchRFC822(seqID)
+	if ic.uidValidity != validity {
+		return nil, ErrStaleMessageID
+	}
+	if cached, ok := c.getCachedMessage(creds.Email, method, fullID); ok {
+		return &cached, nil
+	}
+	raw, err := ic.fetchRFC822(uid)
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrStaleMessageID
+		}
 		return nil, err
 	}
 	detail := ParseRFC822(fullID, creds.Email, method, raw)
-	c.putCachedMessage(creds.Email, fullID, detail)
+	c.putCachedMessage(creds.Email, method, fullID, detail)
 	return &detail, nil
 }

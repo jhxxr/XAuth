@@ -240,11 +240,11 @@ function MailboxesTab({ onOpenInbox }: { onOpenInbox: (addr: string) => void }) 
     }
   };
 
-  const batchDelete = async () => {
-    if (!window.confirm(`确认将选中的 ${selected.length} 个邮箱移入回收站？`)) return;
+  const batchDelete = async (addresses: string[]) => {
+    if (addresses.length === 0 || !window.confirm(`确认将当前筛选中选中的 ${addresses.length} 个邮箱移入回收站？`)) return;
     try {
-      await api.adminMail("DELETE", "/mailboxes/batch", { addresses: selected });
-      toast(`已批量移入回收站 ${selected.length} 个邮箱`);
+      await api.adminMail("DELETE", "/mailboxes/batch", { addresses });
+      toast(`已批量移入回收站 ${addresses.length} 个邮箱`);
       setSelected([]);
       void loadData();
     } catch (e) {
@@ -268,20 +268,20 @@ function MailboxesTab({ onOpenInbox }: { onOpenInbox: (addr: string) => void }) 
     return true;
   });
 
-  const toggleSelectAll = () => {
+  const visibleIds = filtered?.map((mailbox) => mailbox.address) ?? [];
+  const visibleIdSet = new Set(visibleIds);
+  const visibleSelected = selected.filter((address) => visibleIdSet.has(address));
+  const allChecked = visibleIds.length > 0 && visibleSelected.length === visibleIds.length;
+
+  const toggleSelectAll = (checked: boolean) => {
     if (!filtered) return;
-    if (selected.length === filtered.length && filtered.length > 0) {
-      setSelected([]);
-    } else {
-      setSelected(filtered.map((m) => m.address));
-    }
+    if (!checked) setSelected((prev) => prev.filter((address) => !visibleIdSet.has(address)));
+    else setSelected((prev) => [...new Set([...prev, ...visibleIds])]);
   };
 
   const toggleSelectOne = (addr: string) => {
     setSelected((prev) => (prev.includes(addr) ? prev.filter((a) => a !== addr) : [...prev, addr]));
   };
-
-  const allChecked = !!filtered && filtered.length > 0 && selected.length === filtered.length;
 
   return (
     <div>
@@ -305,7 +305,16 @@ function MailboxesTab({ onOpenInbox }: { onOpenInbox: (addr: string) => void }) 
           </>
         }
       >
-        <SearchField value={search} onChange={setSearch} placeholder="搜索邮箱地址或备注..." label="搜索邮箱" className="w-full sm:w-64" />
+        <SearchField
+          value={search}
+          onChange={(value) => {
+            setSelected([]);
+            setSearch(value);
+          }}
+          placeholder="搜索邮箱地址或备注..."
+          label="搜索邮箱"
+          className="w-full sm:w-64"
+        />
         <Segmented
           label="按状态筛选"
           options={[
@@ -316,7 +325,10 @@ function MailboxesTab({ onOpenInbox }: { onOpenInbox: (addr: string) => void }) 
             ["unassigned", "未分配"],
           ]}
           value={filterStatus}
-          onChange={setFilterStatus}
+          onChange={(value) => {
+            setSelected([]);
+            setFilterStatus(value);
+          }}
         />
       </Toolbar>
 
@@ -337,17 +349,17 @@ function MailboxesTab({ onOpenInbox }: { onOpenInbox: (addr: string) => void }) 
       ) : (
         <div className="panel overflow-hidden">
           {/* Selection bar */}
-          {selected.length > 0 && (
+          {visibleSelected.length > 0 && (
             <div className="flex flex-wrap items-center gap-3 border-b border-stamp/15 bg-stamp/[0.045] px-4 py-2.5">
               <p className="text-[0.8125rem] font-medium text-ink">
-                已选择 <span className="tabular-nums">{selected.length}</span> 个邮箱
+                当前筛选中已选择 <span className="tabular-nums">{visibleSelected.length}</span> 个邮箱
               </p>
               <Button variant="ghost" size="sm" onClick={() => setSelected([])}>
                 取消选择
               </Button>
-              <Button variant="danger" size="sm" className="ml-auto" onClick={() => void batchDelete()}>
+              <Button variant="danger" size="sm" className="ml-auto" onClick={() => void batchDelete(visibleSelected)}>
                 <Icon name="trash" className="size-3.5" />
-                批量删除选中的 {selected.length} 个邮箱
+                批量删除选中的 {visibleSelected.length} 个邮箱
               </Button>
             </div>
           )}
@@ -356,7 +368,7 @@ function MailboxesTab({ onOpenInbox }: { onOpenInbox: (addr: string) => void }) 
               <thead>
                 <tr>
                   <th scope="col" className="w-10 !pr-0">
-                    <input type="checkbox" className="size-4 accent-ink align-middle" checked={allChecked} onChange={toggleSelectAll} aria-label="全选" />
+                    <input type="checkbox" className="size-4 accent-ink align-middle" checked={allChecked} onChange={(event) => toggleSelectAll(event.target.checked)} aria-label="全选当前列表" />
                   </th>
                   {["邮箱地址", "备注", "状态", "分配给 (XAuth 用户)", ""].map((h, i) => (
                     <th key={i} scope="col">

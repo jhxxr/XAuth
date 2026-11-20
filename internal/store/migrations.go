@@ -299,4 +299,10 @@ CREATE TABLE oidc_consents (
 );
 CREATE INDEX oidc_consents_client ON oidc_consents(client_id);
 `,
+	// Phase 10: persist the browser's authentication method and bind pending
+	// consent to the specific session that reached it.
+	`
+ALTER TABLE sessions ADD COLUMN amr TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE auth_requests ADD COLUMN session_id TEXT NOT NULL DEFAULT '';
+`,
 }

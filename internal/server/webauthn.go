@@ -233,22 +233,13 @@ func (s *Server) handlePasskeyLoginFinish(w http.ResponseWriter, r *http.Request
 	}
 	_ = s.st.TouchLogin(r.Context(), wu.User.ID)
 	wu.User.LastLoginAt = s.st.Now()
-	sess, err := s.startSession(w, r, wu.User.ID)
+	sess, err := s.startSession(w, r, wu.User.ID, webauthnAMR...)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
 	}
 	s.audit(r.Context(), store.Event{Type: store.EvLoginSuccess, ActorID: wu.User.ID, IP: s.clientIP(r), Detail: map[string]any{"amr": "webauthn"}})
-	resp := authResponse{User: toUserJSON(wu.User)}
-	flow := r.URL.Query().Get("flow")
-	if flow != "" {
-		if a, err := s.st.AuthRequestByID(r.Context(), flow); err != nil || a.Status != store.AuthPending {
-			resp.FlowError = "flow_expired"
-		} else {
-			resp.Redirect, resp.RequiresConsent, resp.FlowError = s.completeFlow(r.Context(), a, wu.User.ID, sess.AuthTime, webauthnAMR)
-		}
-	}
-	writeJSON(w, http.StatusOK, resp)
+	s.finishSignIn(w, r, http.StatusOK, wu.User, sess, r.URL.Query().Get("flow"))
 }
 
 // handleDeletePasskey removes one of the user's passkeys. A password account

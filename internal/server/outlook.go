@@ -45,6 +45,8 @@ func (s *Server) writeOutlookFetchError(w http.ResponseWriter, r *http.Request, 
 	switch {
 	case errors.Is(err, outlook.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found")
+	case errors.Is(err, outlook.ErrStaleMessageID):
+		writeError(w, http.StatusConflict, "outlook_stale_message")
 	case errors.Is(err, outlook.ErrAccountAbuse):
 		writeError(w, http.StatusBadGateway, "outlook_abuse")
 	case errors.Is(err, outlook.ErrInvalidGrant):

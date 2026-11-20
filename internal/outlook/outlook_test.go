@@ -5,10 +5,12 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -145,6 +147,12 @@ func TestGraphAndIMAPFallback(t *testing.T) {
 		"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
 		"Verification code: 654321\r\n"
 
+	var uidValidity atomic.Int64
+	uidValidity.Store(7)
+	var uidPresent atomic.Bool
+	uidPresent.Store(true)
+	var uidMismatch atomic.Bool
+	var uidFetches atomic.Int64
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -171,11 +179,22 @@ func TestGraphAndIMAPFallback(t *testing.T) {
 						_, _ = br.ReadString('\n')
 						_, _ = fmt.Fprintf(conn, "%s OK AUTHENTICATE completed.\r\n", tag)
 					case "SELECT":
-						_, _ = fmt.Fprintf(conn, "* 1 EXISTS\r\n%s OK [READ-WRITE] SELECT completed.\r\n", tag)
-					case "SEARCH":
-						_, _ = fmt.Fprintf(conn, "* SEARCH 1\r\n%s OK SEARCH completed.\r\n", tag)
-					case "FETCH":
-						_, _ = fmt.Fprintf(conn, "* 1 FETCH (BODY[] {%d}\r\n%s)\r\n%s OK FETCH completed.\r\n", len(rawMsg), rawMsg, tag)
+						_, _ = fmt.Fprintf(conn, "* 1 EXISTS\r\n* OK [UIDVALIDITY %d] UIDs\r\n%s OK [READ-WRITE] SELECT completed.\r\n", uidValidity.Load(), tag)
+					case "UID":
+						if len(parts) >= 3 && strings.EqualFold(parts[2], "SEARCH") {
+							_, _ = fmt.Fprintf(conn, "* SEARCH 1\r\n%s OK SEARCH completed.\r\n", tag)
+						} else if len(parts) >= 3 && strings.EqualFold(parts[2], "FETCH") {
+							uidFetches.Add(1)
+							if uidPresent.Load() {
+								uid := parts[3]
+								if uidMismatch.Load() {
+									uid = "2"
+								}
+								_, _ = fmt.Fprintf(conn, "* 1 FETCH (UID %s BODY[] {%d}\r\n%s)\r\n%s OK FETCH completed.\r\n", uid, len(rawMsg), rawMsg, tag)
+							} else {
+								_, _ = fmt.Fprintf(conn, "%s OK FETCH completed.\r\n", tag)
+							}
+						}
 					case "LOGOUT":
 						_, _ = fmt.Fprintf(conn, "* BYE IMAP4rev1 Server logging out\r\n%s OK LOGOUT completed.\r\n", tag)
 						return
@@ -227,5 +246,38 @@ func TestGraphAndIMAPFallback(t *testing.T) {
 	}
 	if items[0].VerificationCode == nil || *items[0].VerificationCode != "654321" {
 		t.Fatalf("expected code 654321 from IMAP, got %+v", items[0].VerificationCode)
+	}
+	if items[0].ID != "in:7:1" {
+		t.Fatalf("IMAP message ID = %q, want UIDVALIDITY + UID", items[0].ID)
+	}
+	if _, err := client.GetMessage(context.Background(), creds, items[0].ID, MethodIMAPNew); err != nil {
+		t.Fatalf("cached IMAP message with matching UIDVALIDITY: %v", err)
+	}
+	fetchedBeforeChange := uidFetches.Load()
+	uidValidity.Store(8)
+	if _, err := client.GetMessage(context.Background(), creds, items[0].ID, MethodIMAPNew); !errors.Is(err, ErrStaleMessageID) {
+		t.Fatalf("message after UIDVALIDITY changed: got %v, want ErrStaleMessageID", err)
+	}
+	if uidFetches.Load() != fetchedBeforeChange {
+		t.Fatal("a stale message ID fetched content from the updated mailbox")
+	}
+
+	uidValidity.Store(7)
+	uidMismatch.Store(true)
+	uncached := NewClient()
+	uncached.TokenURLIMAP = srv.URL + "/token/imap"
+	uncached.IMAPServerNew = ln.Addr().String()
+	uncached.TLSConfig = tlsClientCfg
+	if _, err := uncached.GetMessage(context.Background(), creds, items[0].ID, MethodIMAPNew); !errors.Is(err, ErrStaleMessageID) {
+		t.Fatalf("mismatched UID response: got %v, want ErrStaleMessageID", err)
+	}
+	uidMismatch.Store(false)
+	uidPresent.Store(false)
+	uncached = NewClient()
+	uncached.TokenURLIMAP = srv.URL + "/token/imap"
+	uncached.IMAPServerNew = ln.Addr().String()
+	uncached.TLSConfig = tlsClientCfg
+	if _, err := uncached.GetMessage(context.Background(), creds, items[0].ID, MethodIMAPNew); !errors.Is(err, ErrStaleMessageID) {
+		t.Fatalf("deleted IMAP message: got %v, want ErrStaleMessageID", err)
 	}
 }

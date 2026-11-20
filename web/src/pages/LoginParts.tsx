@@ -14,7 +14,6 @@ const scopeLabels: Record<string, string> = {
 
 /** The tear-off stub: what the app receives and where the browser goes next. */
 export function FlowStub({ flow }: { flow: Flow }) {
-  const items = flow.scopes.filter((s) => scopeLabels[s]);
   return (
     <div className="grid gap-4 text-sm sm:grid-cols-[1fr_auto] sm:items-end">
       <div>
@@ -22,12 +21,12 @@ export function FlowStub({ flow }: { flow: Flow }) {
           <span className="normal-case">{flow.app.name}</span> 请求访问
         </p>
         <ul className="mt-2.5 space-y-1.5">
-          {items.map((s) => (
+          {flow.scopes.map((s) => (
             <li key={s} className="flex items-center gap-2">
               <span aria-hidden="true" className="grid size-4 place-items-center rounded-full bg-seal/10 text-seal">
                 <Icon name="check" className="size-2.5" />
               </span>
-              {scopeLabels[s]}
+              {scopeLabels[s] ?? s}
             </li>
           ))}
         </ul>
@@ -52,7 +51,7 @@ export function ContinueCard({ user, appName, busy, onContinue, onSwitch }: Cont
           <p className="truncate text-sm text-ink-soft">{user.email}</p>
         </div>
       </div>
-      <Button className="mt-6 w-full" busy={busy} onClick={onContinue}>
+      <Button className="mt-6 !h-auto min-h-11 w-full !whitespace-normal py-2" busy={busy} onClick={onContinue}>
         以此身份继续登录 {appName}
       </Button>
       <button type="button" onClick={onSwitch} className="mt-3 w-full rounded-lg py-2 text-sm font-medium text-ink-soft hover:text-ink">
@@ -62,9 +61,9 @@ export function ContinueCard({ user, appName, busy, onContinue, onSwitch }: Cont
   );
 }
 
-type ConsentProps = { user: User; appName: string; busy: boolean; onApprove: () => void; onSwitch: () => void };
+type ConsentProps = { user: User; flow: Flow; busy: boolean; onApprove: () => void; onSwitch: () => void };
 
-export function ConsentCard({ user, appName, busy, onApprove, onSwitch }: ConsentProps) {
+export function ConsentCard({ user, flow, busy, onApprove, onSwitch }: ConsentProps) {
   return (
     <div>
       <div className="flex items-center gap-3 border-b border-line pb-4">
@@ -76,9 +75,32 @@ export function ConsentCard({ user, appName, busy, onApprove, onSwitch }: Consen
         </div>
       </div>
       <p className="mt-4 text-sm leading-6 text-ink-soft">
-        同意后，{appName} 可按下方列出的权限读取信息。XAuth 不会向应用提供你的密码。
+        同意后，{flow.app.name} 可读取你批准的资料。XAuth 不会向应用提供你的密码。
       </p>
-      <Button className="mt-5 w-full" busy={busy} onClick={onApprove}>
+      <section aria-label={`授权给 ${flow.app.name} 的内容`} className="mt-4 space-y-3 rounded-xl border border-line bg-desk/35 p-3.5">
+        <div>
+          <p className="eyebrow">应用</p>
+          <p className="mt-1 break-words text-sm font-semibold">{flow.app.name}</p>
+        </div>
+        <div>
+          <p className="eyebrow">请求的权限</p>
+          <ul className="mt-1.5 space-y-1.5">
+            {flow.scopes.map((scope) => (
+              <li key={scope} className="flex items-start gap-2 text-[0.8125rem] leading-5 text-ink-soft">
+                <span aria-hidden="true" className="mt-0.5 grid size-4 shrink-0 place-items-center rounded-full bg-seal/10 text-seal">
+                  <Icon name="check" className="size-2.5" />
+                </span>
+                <span>{scopeLabels[scope] ?? scope}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="border-t border-line pt-2.5">
+          <p className="eyebrow">授权后返回</p>
+          <p className="mt-1 break-all font-mono text-xs text-ink-soft">{flow.redirectTo}</p>
+        </div>
+      </section>
+      <Button className="mt-5 min-h-11 w-full" busy={busy} onClick={onApprove}>
         同意并继续
       </Button>
       <button
@@ -132,7 +154,7 @@ export function LoginForm({ hint, submitLabel, signupHref, showForgot, onSubmit 
           </div>
         )}
       </div>
-      <Button type="submit" className="w-full" busy={busy}>
+      <Button type="submit" className="!h-auto min-h-11 w-full !whitespace-normal py-2" busy={busy}>
         {submitLabel}
       </Button>
       {signupHref && (

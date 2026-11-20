@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"xauth/internal/store"
 )
@@ -36,6 +37,134 @@ func TestSSOAndPrompts(t *testing.T) {
 	cb := e.follow(e.browser(), e.authorizeURL(p))
 	if cb.Query().Get("error") != "login_required" || cb.Query().Get("state") != "s4" {
 		t.Fatalf("prompt=none without session: %s", cb)
+	}
+}
+
+func TestMaxAgeZeroReauthenticationCanContinueToConsent(t *testing.T) {
+	e := newEnv(t)
+	u := e.user("max-age-zero@example.com", "correct horse", false)
+	app, secret := e.app(store.ClientWeb, rpCallback)
+	b := e.browser()
+	login(e, b, u.Email, "correct horse")
+
+	verifier, challenge := pkce()
+	p := authParams{
+		clientID: app.ID, redirect: rpCallback, challenge: challenge, method: "S256",
+		scope: "openid", state: "max-age-zero", maxAge: "0",
+	}
+	page := e.follow(b, e.authorizeURL(p))
+	if page.Path != "/login" {
+		t.Fatalf("max_age=0 accepted an existing session without reauthentication: %s", page)
+	}
+	flowID := page.Query().Get("flow")
+	var before struct{ CanContinue bool }
+	e.api(b, http.MethodGet, "/api/flow/"+flowID, nil).json(t, &before)
+	if before.CanContinue {
+		t.Fatal("max_age=0 allowed the old session to continue")
+	}
+
+	var signedIn struct {
+		RequiresConsent bool
+		FlowError       string
+	}
+	r := e.api(b, http.MethodPost, "/api/login", map[string]string{
+		"email": u.Email, "password": "correct horse", "flow": flowID,
+	})
+	if r.status != http.StatusOK {
+		t.Fatalf("reauthenticate: %d %s", r.status, r.body)
+	}
+	r.json(t, &signedIn)
+	if !signedIn.RequiresConsent || signedIn.FlowError != "" {
+		t.Fatalf("reauthentication did not lead to the consent step: %+v", signedIn)
+	}
+	var after struct{ CanContinue, RequiresConsent bool }
+	r = e.api(b, http.MethodGet, "/api/flow/"+flowID, nil)
+	if r.status != http.StatusOK {
+		t.Fatalf("get reauthenticated flow: %d %s", r.status, r.body)
+	}
+	r.json(t, &after)
+	if !after.CanContinue || !after.RequiresConsent {
+		t.Fatalf("fresh session could not continue to consent: %+v", after)
+	}
+	var decision struct{ Redirect string }
+	r = e.api(b, http.MethodPost, "/api/flow/"+flowID+"/continue", nil)
+	if r.status != http.StatusOK {
+		t.Fatalf("approve consent after reauthentication: %d %s", r.status, r.body)
+	}
+	r.json(t, &decision)
+	code := e.codeFrom(e.follow(b, e.abs(decision.Redirect)), p.state)
+	status, tokens := e.exchange(app.ID, secret, code, verifier)
+	if status != http.StatusOK {
+		t.Fatalf("exchange max_age=0 code: %d %+v", status, tokens)
+	}
+	claims := e.idClaims(tokens.IDToken)
+	if methods, ok := claims["amr"].([]any); !ok || len(methods) != 1 || methods[0] != "pwd" {
+		t.Fatalf("reauthenticated ID token reports the wrong method: %v", claims["amr"])
+	}
+	if authTime, ok := claims["auth_time"].(float64); !ok || authTime <= 0 {
+		t.Fatalf("reauthenticated ID token has no auth_time: %v", claims["auth_time"])
+	}
+}
+
+func TestOIDCReusesTheActualAuthenticationMethodFromSession(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		amr  []string
+		want string
+	}{{name: "passkey session", amr: []string{"webauthn"}, want: "webauthn"}, {name: "unknown legacy session"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			u := e.user("session-amr@example.com", "correct horse", false)
+			app, secret := e.app(store.ClientWeb, rpCallback)
+			raw, _, err := e.st.CreateSession(t.Context(), u.ID, 24*time.Hour, store.SessionMeta{AMR: tc.amr})
+			if err != nil {
+				t.Fatal(err)
+			}
+			b := e.browser()
+			issuer, err := url.Parse(e.issuer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b.Jar.SetCookies(issuer, []*http.Cookie{{Name: "xauth_session", Value: raw, Path: "/"}})
+
+			verifier, challenge := pkce()
+			p := authParams{
+				clientID: app.ID, redirect: rpCallback, challenge: challenge, method: "S256",
+				scope: "openid", state: "session-amr",
+			}
+			page := e.follow(b, e.authorizeURL(p))
+			if page.Path != "/login" {
+				t.Fatalf("first consent did not bind the existing session: %s", page)
+			}
+			var flow struct{ CanContinue, RequiresConsent bool }
+			r := e.api(b, http.MethodGet, "/api/flow/"+page.Query().Get("flow"), nil)
+			if r.status != http.StatusOK {
+				t.Fatalf("get authorization flow: %d %s", r.status, r.body)
+			}
+			r.json(t, &flow)
+			if !flow.CanContinue || !flow.RequiresConsent {
+				t.Fatalf("unexpected session-bound consent: %+v", flow)
+			}
+			var decision struct{ Redirect string }
+			r = e.api(b, http.MethodPost, "/api/flow/"+page.Query().Get("flow")+"/continue", nil)
+			if r.status != http.StatusOK {
+				t.Fatalf("approve session-bound consent: %d %s", r.status, r.body)
+			}
+			r.json(t, &decision)
+			code := e.codeFrom(e.follow(b, e.abs(decision.Redirect)), p.state)
+			status, tokens := e.exchange(app.ID, secret, code, verifier)
+			if status != http.StatusOK {
+				t.Fatalf("exchange: %d %+v", status, tokens)
+			}
+			claims := e.idClaims(tokens.IDToken)
+			if tc.want == "" {
+				if _, ok := claims["amr"]; ok {
+					t.Fatalf("legacy session must not claim a guessed authentication method: %v", claims["amr"])
+				}
+			} else if methods, ok := claims["amr"].([]any); !ok || len(methods) != 1 || methods[0] != tc.want {
+				t.Fatalf("session method was not preserved in amr: %v", claims["amr"])
+			}
+		})
 	}
 }
 
@@ -242,6 +371,44 @@ func TestConsentDecisionIsBoundToSessionThatSawThePage(t *testing.T) {
 	}
 	if r := e.api(b, http.MethodPost, "/api/flow/"+flowID+"/continue", nil); r.status != http.StatusConflict {
 		t.Fatalf("different account approved consent: %d %s", r.status, r.body)
+	}
+}
+
+func TestConsentCannotMoveToANewSessionOfTheSameUser(t *testing.T) {
+	e := newEnv(t)
+	u := e.user("same-user-new-session@example.com", "correct horse", false)
+	app, _ := e.app(store.ClientSPA, rpCallback)
+	b := e.browser()
+	login(e, b, u.Email, "correct horse")
+	_, challenge := pkce()
+	p := authParams{
+		clientID: app.ID, redirect: rpCallback, challenge: challenge, method: "S256",
+		scope: "openid", state: "new-session-binding",
+	}
+	page := e.follow(b, e.authorizeURL(p))
+	flowID := page.Query().Get("flow")
+	if page.Path != "/login" || flowID == "" {
+		t.Fatalf("expected the initial approval page, got %s", page)
+	}
+	request, err := e.st.AuthRequestByID(t.Context(), flowID)
+	if err != nil || request.SessionID == "" {
+		t.Fatalf("authorization was not tied to the current session: request=%+v err=%v", request, err)
+	}
+
+	// A new login by the same account replaces its session cookie. Its user ID
+	// and second-rounded auth_time may match, but it did not see this page.
+	login(e, b, u.Email, "correct horse")
+	var flow struct{ CanContinue, RequiresConsent bool }
+	r := e.api(b, http.MethodGet, "/api/flow/"+flowID, nil)
+	if r.status != http.StatusOK {
+		t.Fatalf("reload approval after same-user login: %d %s", r.status, r.body)
+	}
+	r.json(t, &flow)
+	if flow.CanContinue {
+		t.Fatal("a replacement session of the same account reused a consent decision page")
+	}
+	if r := e.api(b, http.MethodPost, "/api/flow/"+flowID+"/continue", nil); r.status != http.StatusConflict {
+		t.Fatalf("replacement session approved the stale consent page: %d %s", r.status, r.body)
 	}
 }
 

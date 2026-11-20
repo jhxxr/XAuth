@@ -10,33 +10,63 @@ import { getPasskey, supportsPasskeys } from "../webauthn";
 import { ConsentCard, ContinueCard, FlowStub, LoginForm } from "./LoginParts";
 
 type Mark = { tone: "issued" | "void"; label: string } | null;
+type LoginState = "loading" | "ready" | "expired" | "denied" | "error";
 
 const clock = () => new Date().toLocaleTimeString("zh-CN", { hour12: false });
+
+function stateFromRedirectError(code: string | null): LoginState {
+  if (code === "flow_expired") return "expired";
+  if (code === "access_denied") return "denied";
+  if (code) return "error";
+  return "ready";
+}
+
+function messageFromRedirectError(code: string | null) {
+  if (code === "access_denied") return "这次登录授权未完成，该应用没有获得访问权限。";
+  if (code === "flow_expired") return "这个登录请求已过期或已使用，请回到原来的应用重新登录。";
+  return code ? "无法完成这次登录请求，请返回原来的应用后重试。" : "";
+}
 
 export function LoginPage() {
   const { query } = useLocation();
   const flowId = query.get("flow") ?? "";
   const { session, setUser } = useSession();
   const [flow, setFlow] = useState<Flow | null>(null);
-  const [state, setState] = useState<"loading" | "ready" | "expired">(
-    query.get("error") === "flow_expired" ? "expired" : flowId ? "loading" : "ready",
-  );
+  const [state, setState] = useState<LoginState>(() => {
+    const redirected = stateFromRedirectError(query.get("error"));
+    return redirected === "ready" && flowId ? "loading" : redirected;
+  });
   const [mode, setMode] = useState<"continue" | "consent" | "form">("form");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(() => messageFromRedirectError(query.get("error")));
   const [mark, setMark] = useState<Mark>(null);
 
   useEffect(() => {
     if (!flowId || state !== "loading") return;
+    let active = true;
     api
       .flow(flowId)
       .then((f) => {
+        if (!active) return;
         setFlow(f);
         setMode(f.canContinue ? (f.requiresConsent ? "consent" : "continue") : "form");
+        setError("");
         setState("ready");
       })
-      .catch(() => setState("expired"));
+      .catch((err) => {
+        if (!active) return;
+        const expired = err instanceof ApiError && (err.status === 410 || err.code === "flow_expired");
+        setError(expired ? "" : errorMessage(err));
+        setState(expired ? "expired" : err instanceof ApiError && err.code === "access_denied" ? "denied" : "error");
+      });
+    return () => { active = false; };
   }, [flowId, state]);
+
+  const retryFlow = () => {
+    setError("");
+    setFlow(null);
+    setState(flowId ? "loading" : "ready");
+  };
 
   // A signed-in visitor with nothing to approve belongs on the account page.
   const user = session?.user;
@@ -51,8 +81,12 @@ export function LoginPage() {
       return;
     }
     setUser(r.user);
-    if (r.flowError) setState("expired");
-    else if (flowId && r.requiresConsent) setMode("consent");
+    if (r.flowError === "flow_expired") setState("expired");
+    else if (r.flowError === "access_denied") setState("denied");
+    else if (r.flowError) {
+      setError("登录已完成，但无法继续处理此应用的请求。请重新打开登录请求。");
+      setState("error");
+    } else if (flowId && r.requiresConsent) setMode("consent");
     else navigate("/account", { replace: true });
   };
 
@@ -65,14 +99,21 @@ export function LoginPage() {
       leave(r.redirect);
     } catch (err) {
       setBusy(false);
-      if (err instanceof ApiError && err.code === "login_required") setMode("form");
+      if (err instanceof ApiError && (err.code === "login_required" || err.status === 401)) setMode("form");
       else if (err instanceof ApiError && err.status === 410) setState("expired");
+      else if (err instanceof ApiError && err.code === "access_denied") setState("denied");
       else setError(errorMessage(err));
     }
   };
 
   if (state === "loading" || !session) {
-    return <Centered>{<div className="pass h-80 animate-pulse motion-reduce:animate-none" aria-label="正在加载" />}</Centered>;
+    return (
+      <Centered>
+        <div role="status" aria-live="polite" className="pass grid h-80 place-items-center animate-pulse text-sm text-ink-soft motion-reduce:animate-none">
+          正在验证登录请求…
+        </div>
+      </Centered>
+    );
   }
 
   const host = new URL(session.issuer).host;
@@ -80,13 +121,20 @@ export function LoginPage() {
     ? { seed: flow.app.id, eyebrow: mode === "consent" ? "授权给" : "登录到", title: flow.app.name, mark: flow.app.name.slice(0, 1).toUpperCase(), mrzLines: mrz(flow.app.name, flow.app.id) }
     : { seed: session.issuer, eyebrow: "账户通行证", title: "XAuth", mark: "X", mrzLines: mrz(host, host.replace(/\W/g, "")) };
 
-  if (state === "expired") {
+  if (state === "expired" || state === "denied" || state === "error") {
+    const expired = state === "expired";
+    const denied = state === "denied";
+    const outcome = expired ? "已失效" : denied ? "未授权" : "暂不可用";
     return (
       <Centered>
-        <Pass {...passProps} level={1} stamp={<Stamp tone="void" label="已失效" detail="EXPIRED" />}>
-          <p className="max-w-[30ch] text-sm leading-relaxed text-ink-soft">
-            这个登录链接已过期或已经使用过。请回到原来的应用重新点击登录。
+        <Pass {...passProps} level={1}>
+          <p className="mb-2 font-semibold">{outcome}</p>
+          <p role="alert" className="max-w-[34ch] text-sm leading-relaxed text-ink-soft">
+            {expired ? "这个登录请求已过期或已使用，请回到原来的应用重新登录。" : denied ? "这次登录授权未完成，该应用没有获得访问权限。" : error || "无法加载登录请求，请检查网络后重试。"}
           </p>
+          {state === "error" && flowId && (
+            <Button variant="secondary" className="mt-5 w-full" onClick={retryFlow}>重试获取登录请求</Button>
+          )}
           <Link href={user ? "/account" : "/login"} className="mt-5 inline-block text-sm font-semibold underline decoration-line underline-offset-4 hover:decoration-ink">
             {user ? "前往我的账户" : "直接登录 XAuth"}
           </Link>
@@ -100,8 +148,8 @@ export function LoginPage() {
 
   return (
     <Centered>
-      <Pass {...passProps} level={1} stamp={stamp} stub={flow && <FlowStub flow={flow} />}>
-        <fieldset disabled={!!mark} className="min-w-0">
+      <Pass {...passProps} level={1} stamp={stamp} stub={flow && mode !== "consent" && <FlowStub flow={flow} />}>
+        <fieldset disabled={!!mark || busy} className="min-w-0">
           {error && (
             <div className="mb-4">
               <Notice>{error}</Notice>
@@ -118,7 +166,7 @@ export function LoginPage() {
           ) : flow && mode === "consent" && user ? (
             <ConsentCard
               user={user}
-              appName={flow.app.name}
+              flow={flow}
               busy={busy}
               onApprove={() => decide(() => api.continueFlow(flow.id), "issued", "已授权")}
               onSwitch={() => setMode("form")}

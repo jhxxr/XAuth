@@ -63,6 +63,52 @@ docker run -d --name xauth \
 ```
 
 - 数据库在容器内是 `/data/xauth.db`，用卷持久化。容器以 UID 65532 运行；镜像里的 `/data` 已属于这个用户，所以新建的命名卷会自动带上正确属主。
+- 用独立保存的 `age` X25519 私钥加密数据库备份：备份机器只需公钥，私钥另行异地保管。先安装 [`age`](https://github.com/FiloSottile/age)，创建恢复密钥并单独保管：
+
+```bash
+age-keygen -o xauth-recovery.key
+age-keygen -y xauth-recovery.key > xauth-recovery.pub
+```
+
+然后在能访问 SQLite 数据库文件的受信任机器上创建在线、一致性快照。恢复到**新的**数据库路径，先验证隔离实例，再切换 `XAUTH_DB` 并重启服务。现有文件不会被覆盖；恢复命令会校验解密和 SQLite 完整性，再原子发布文件。Docker 环境可在运行中的实例内创建备份，只复制密文离开数据卷；恢复到隔离实例时仍使用原数据卷中的另一个新数据库文件：
+
+```bash
+# Linux：备份当前在运行的、采用 WAL 模式的数据库
+./xauth backup -output xauth-2026-11-20.db.age -recipient "$(cat xauth-recovery.pub)"
+
+# Windows PowerShell
+$recipient = Get-Content -Raw .\xauth-recovery.pub
+.\xauth.exe backup -output .\xauth-backup.age -recipient $recipient.Trim()
+
+# Docker：从正在运行的容器生成密文，再只复制密文到异地
+docker exec -e XAUTH_BACKUP_RECIPIENT="$(cat xauth-recovery.pub)" xauth \
+  /usr/local/bin/xauth backup -output /data/xauth-2026-11-20.db.age
+docker cp xauth:/data/xauth-2026-11-20.db.age ./xauth-2026-11-20.db.age
+
+# 先恢复并启动独立实例，验证账号登录、邮件凭据解密与 OIDC 签名密钥
+./xauth restore -input xauth-2026-11-20.db.age -identity xauth-recovery.key -db restore/xauth.db
+XAUTH_DB=restore/xauth.db XAUTH_ISSUER=https://auth.example.com ./xauth serve
+
+# 在隔离容器中演练恢复；restore.db 是新路径，且仅映射到本机 18081
+docker cp ./xauth-2026-11-20.db.age xauth:/data/recovery.age
+docker run --rm --user root --volumes-from xauth \
+  -v "$PWD/xauth-recovery.key:/run/secrets/xauth-recovery.key:ro" \
+  --entrypoint /usr/local/bin/xauth ghcr.io/OWNER/REPO:edge restore \
+  -input /data/recovery.age -identity /run/secrets/xauth-recovery.key -db /data/restore.db
+# The one-shot restore runs as root so it can read the 0600 host key. Reassign
+# only the new restored database to XAuth's runtime UID before the drill.
+docker run --rm --user root --volumes-from xauth alpine:3.20 chown 65532:65532 /data/restore.db
+docker run -d --name xauth-restore-check -p 127.0.0.1:18081:8080 \
+  --volumes-from xauth \
+  -v "$PWD/xauth-recovery.key:/run/secrets/xauth-recovery.key:ro" \
+  -e XAUTH_LISTEN=0.0.0.0:8080 -e XAUTH_ISSUER=https://auth.example.com \
+  -e XAUTH_DB=/data/restore.db --entrypoint /usr/local/bin/xauth \
+  ghcr.io/OWNER/REPO:edge serve
+# 验证恢复实例能够就绪、登录、读取邮件凭据并签发 OIDC 后，再退出它。
+docker rm -f xauth-restore-check
+```
+
+恢复密钥**不能和密文备份或运行数据库保存在同一个卷/位置**；丢失它就无法恢复密文中的数据库。恢复命令只写入尚不存在的新数据库路径；演练通过后，再停掉服务并显式改用验证过的数据库文件。不要在服务仍运行时替换其数据库。
 
 ```bash
 docker volume create xauth-data
@@ -105,7 +151,7 @@ Discovery:  https://auth.example.com/.well-known/openid-configuration
 ## 部署
 
 1. 放在 HTTPS 反向代理后面，设置 `XAUTH_ISSUER=https://你的域名`。Cookie 会自动加 `Secure` 和 `__Host-` 前缀。
-2. 数据库文件里有密码哈希和**未加密的令牌签名私钥**，只能让运行 XAuth 的账户读取，并定期备份（`sqlite3 xauth.db ".backup backup.db"`）。
+2. 数据库文件包含密码哈希、令牌签名私钥，以及用于加密 TOTP 和 Outlook 凭据的密钥；**必须把 SQLite 数据库和 WAL 文件当作敏感凭据文件保护**。定期用 `xauth backup` 生成 age 加密的一致性快照，将密文与恢复私钥分别异地保存，并定期恢复到隔离实例演练验证。
 3. 只运行一个实例。限流计数存在内存里，重启后清零。
 
 ## 开发

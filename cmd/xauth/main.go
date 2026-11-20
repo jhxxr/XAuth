@@ -41,6 +41,10 @@ func main() {
 		err = serve(log)
 	case "create-admin":
 		err = createAdmin(args)
+	case "backup":
+		err = runBackup(args)
+	case "restore":
+		err = runRestore(args)
 	case "help", "-h", "--help":
 		usage()
 		return
@@ -59,6 +63,10 @@ func usage() {
   xauth [serve]                          start the server
   xauth create-admin -email EMAIL [-name NAME]
                                          create an admin, or promote an existing user
+  xauth backup -output FILE.age [-recipient AGE_PUBLIC_KEY]
+                                         make a consistent, encrypted SQLite backup
+  xauth restore -input FILE.age -identity KEY_FILE -db NEW_DB
+                                         verify and restore to a new database file
 
 Environment:
   XAUTH_ISSUER       public URL, e.g. https://auth.example.com (default http://localhost:8080)
@@ -71,6 +79,7 @@ Environment:
   XMAIL_BASE_URL     xmail deployment, e.g. https://mail.example.com (optional)
   XMAIL_API_KEY      xmail API key (sk_live_...); required with XMAIL_BASE_URL
   XAUTH_ADMIN_PASSWORD  password for create-admin instead of a prompt
+  XAUTH_BACKUP_RECIPIENT  optional age public key for the backup command
 `)
 }
 

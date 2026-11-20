@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 	"unicode/utf8"
@@ -17,6 +18,7 @@ type Session struct {
 	UserAgent string
 	IP        string
 	AuthTime  time.Time
+	AMR       []string
 	CreatedAt time.Time
 	LastSeen  time.Time
 	ExpiresAt time.Time
@@ -26,6 +28,7 @@ type Session struct {
 type SessionMeta struct {
 	UserAgent string
 	IP        string
+	AMR       []string
 }
 
 func truncate(s string, max int) string {
@@ -45,28 +48,32 @@ func (s *Store) CreateSession(ctx context.Context, userID string, ttl time.Durat
 	sess := &Session{
 		ID: NewID(), TokenHash: HashToken(token), UserID: userID,
 		UserAgent: truncate(meta.UserAgent, 256), IP: truncate(meta.IP, 64),
-		AuthTime: now, CreatedAt: now, LastSeen: now, ExpiresAt: now.Add(ttl),
+		AuthTime: now, AMR: append([]string(nil), meta.AMR...), CreatedAt: now, LastSeen: now, ExpiresAt: now.Add(ttl),
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO sessions (id, token_hash, user_id, user_agent, ip, auth_time, created_at, last_seen, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		sess.ID, sess.TokenHash, userID, sess.UserAgent, sess.IP, now.Unix(), now.Unix(), now.Unix(), sess.ExpiresAt.Unix())
+		`INSERT INTO sessions (id, token_hash, user_id, user_agent, ip, auth_time, created_at, last_seen, expires_at, amr)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sess.ID, sess.TokenHash, userID, sess.UserAgent, sess.IP, now.Unix(), now.Unix(), now.Unix(), sess.ExpiresAt.Unix(), jsonList(sess.AMR))
 	if err != nil {
 		return "", nil, err
 	}
 	return token, sess, nil
 }
 
-const sessionCols = "id, token_hash, user_id, user_agent, ip, auth_time, created_at, last_seen, expires_at"
+const sessionCols = "id, token_hash, user_id, user_agent, ip, auth_time, created_at, last_seen, expires_at, amr"
 
 func scanSession(row interface{ Scan(...any) error }) (*Session, error) {
 	var sess Session
+	var amr string
 	var authTime, created, lastSeen, expires int64
-	err := row.Scan(&sess.ID, &sess.TokenHash, &sess.UserID, &sess.UserAgent, &sess.IP, &authTime, &created, &lastSeen, &expires)
+	err := row.Scan(&sess.ID, &sess.TokenHash, &sess.UserID, &sess.UserAgent, &sess.IP, &authTime, &created, &lastSeen, &expires, &amr)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(amr), &sess.AMR); err != nil {
 		return nil, err
 	}
 	sess.AuthTime, sess.CreatedAt = fromUnix(authTime), fromUnix(created)

@@ -65,12 +65,12 @@ type authResponse struct {
 }
 
 // startSession replaces any current session with a new one for userID.
-func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID string) (*store.Session, error) {
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID string, amr ...string) (*store.Session, error) {
 	if info := sessionFrom(r.Context()); info != nil {
 		_ = s.st.DeleteSession(r.Context(), info.sess.TokenHash)
 	}
 	token, sess, err := s.st.CreateSession(r.Context(), userID, s.cfg.SessionTTL, store.SessionMeta{
-		UserAgent: r.UserAgent(), IP: s.clientIP(r),
+		UserAgent: r.UserAgent(), IP: s.clientIP(r), AMR: amr,
 	})
 	if err != nil {
 		return nil, err
@@ -84,10 +84,15 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID str
 func (s *Server) finishSignIn(w http.ResponseWriter, r *http.Request, status int, u *store.User, sess *store.Session, flow string) {
 	resp := authResponse{User: toUserJSON(u)}
 	if flow != "" {
-		if a, err := s.st.AuthRequestByID(r.Context(), flow); err != nil || a.Status != store.AuthPending {
+		a, err := s.st.AuthRequestByID(r.Context(), flow)
+		switch {
+		case errors.Is(err, store.ErrNotFound), err == nil && a.Status != store.AuthPending:
 			resp.FlowError = "flow_expired"
-		} else {
-			resp.Redirect, resp.RequiresConsent, resp.FlowError = s.completeFlow(r.Context(), a, u.ID, sess.AuthTime, passwordAMR)
+		case err != nil:
+			s.log.Error("load flow after sign-in", "err", err)
+			resp.FlowError = "internal"
+		default:
+			resp.Redirect, resp.RequiresConsent, resp.FlowError = s.completeFlow(r.Context(), a, sess)
 		}
 	}
 	writeJSON(w, status, resp)
@@ -136,7 +141,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	s.loginEmail.clear(email)
 	_ = s.st.TouchLogin(r.Context(), u.ID)
 	u.LastLoginAt = s.st.Now()
-	sess, err := s.startSession(w, r, u.ID)
+	sess, err := s.startSession(w, r, u.ID, passwordAMR...)
 	if err == nil {
 		s.audit(r.Context(), store.Event{Type: store.EvLoginSuccess, ActorID: u.ID, IP: ip})
 	}
@@ -250,7 +255,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.audit(r.Context(), store.Event{Type: store.EvRegister, ActorID: u.ID, IP: ip, Detail: detail})
-	sess, err := s.startSession(w, r, u.ID)
+	sess, err := s.startSession(w, r, u.ID, passwordAMR...)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -351,16 +356,10 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	u := *info.user
-	u.PasswordHash = hash
-	if err := s.st.UpdateUser(r.Context(), &u); err != nil {
+	if err := s.st.ChangePasswordAndRevokeAccess(r.Context(), info.user.ID, hash, info.sess.TokenHash); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	s.audit(r.Context(), store.Event{Type: store.EvPasswordChange, ActorID: u.ID, IP: s.clientIP(r)})
-	if err := s.st.RevokeUserAccess(r.Context(), u.ID, info.sess.TokenHash); err != nil {
-		s.internalError(w, r, err)
-		return
-	}
+	s.audit(r.Context(), store.Event{Type: store.EvPasswordChange, ActorID: info.user.ID, IP: s.clientIP(r)})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

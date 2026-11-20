@@ -112,25 +112,48 @@ func (s *Store) ListClients(ctx context.Context) ([]*Client, error) {
 	return out, rows.Err()
 }
 
-// UpdateClient writes the editable fields. The type and secret are unchanged.
-// Turning off refresh tokens revokes the ones already issued. Callers that
-// narrow Access must also call RevokeDisallowed.
-func (s *Store) UpdateClient(ctx context.Context, c *Client) error {
+// UpdateClientWithAccess atomically writes editable client settings, optional
+// user assignments, and revokes credentials that the resulting policy forbids.
+// Passing nil for allowedUserIDs preserves the current selection.
+func (s *Store) UpdateClientWithAccess(ctx context.Context, c *Client, allowedUserIDs *[]string) ([]string, error) {
 	now := s.unix()
-	res, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx,
 		"UPDATE clients SET name = ?, redirect_uris = ?, post_logout_redirect_uris = ?, allow_refresh = ?, access = ?, updated_at = ? WHERE id = ?",
 		c.Name, jsonList(c.RedirectURIs), jsonList(c.PostLogoutRedirectURIs), boolInt(c.AllowRefresh), c.Access, now, c.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
+		return nil, ErrNotFound
+	}
+	if allowedUserIDs != nil {
+		if err := replaceClientUsers(ctx, tx, c.ID, *allowedUserIDs); err != nil {
+			return nil, err
+		}
+	}
+	allowed, err := clientUserIDs(ctx, tx, c.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !c.AllowRefresh {
+		if _, err := tx.ExecContext(ctx, "UPDATE refresh_tokens SET revoked_at = ? WHERE client_id = ? AND revoked_at IS NULL", now, c.ID); err != nil {
+			return nil, err
+		}
+	}
+	if err := revokeDisallowedTx(ctx, tx, now, c.ID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 	c.UpdatedAt = fromUnix(now)
-	if !c.AllowRefresh {
-		_, err = s.db.ExecContext(ctx, "UPDATE refresh_tokens SET revoked_at = ? WHERE client_id = ? AND revoked_at IS NULL", now, c.ID)
-	}
-	return err
+	return allowed, nil
 }
 
 // RotateClientSecret replaces the secret of a web client and returns the new one.

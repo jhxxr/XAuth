@@ -20,7 +20,7 @@ func pkce() (verifier, challenge string) {
 }
 
 type authParams struct {
-	clientID, redirect, challenge, method, scope, prompt, state string
+	clientID, redirect, challenge, method, scope, prompt, maxAge, state string
 }
 
 func (e *env) authorizeURL(p authParams) string {
@@ -34,6 +34,9 @@ func (e *env) authorizeURL(p authParams) string {
 	}
 	if p.prompt != "" {
 		q.Set("prompt", p.prompt)
+	}
+	if p.maxAge != "" {
+		q.Set("max_age", p.maxAge)
 	}
 	return e.issuer + "/authorize?" + q.Encode()
 }

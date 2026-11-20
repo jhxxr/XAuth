@@ -3,6 +3,7 @@ module xauth
 go 1.26.2
 
 require (
+	filippo.io/age v1.3.2
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/go-webauthn/webauthn v0.18.2
@@ -10,10 +11,12 @@ require (
 	github.com/zitadel/oidc/v3 v3.51.16
 	golang.org/x/crypto v0.58.0
 	golang.org/x/term v0.47.0
+	golang.org/x/text v0.43.0
 	modernc.org/sqlite v1.61.0
 )
 
 require (
+	filippo.io/hpke v0.4.0 // indirect
 	github.com/bmatcuk/doublestar/v4 v4.10.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
@@ -41,7 +44,6 @@ require (
 	go.opentelemetry.io/otel/trace v1.46.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
 	modernc.org/libc v1.79.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect

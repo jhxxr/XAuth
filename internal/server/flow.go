@@ -24,7 +24,7 @@ func callbackURL(id string) string { return oidcprovider.CallbackPath + "?id=" +
 func loginPageURL(id string) string { return "/login?flow=" + url.QueryEscape(id) }
 
 // canContinue reports whether the signed-in session may answer the request
-// without asking for the password again.
+// without asking the user to authenticate again.
 func (s *Server) canContinue(info *sessionInfo, a *store.AuthRequest) bool {
 	if info == nil {
 		return false
@@ -32,16 +32,23 @@ func (s *Server) canContinue(info *sessionInfo, a *store.AuthRequest) bool {
 	if a.HintSubject != "" && a.HintSubject != info.user.ID {
 		return false
 	}
-	if !a.AuthTime.IsZero() && (a.UserID != info.user.ID || !a.AuthTime.Equal(info.sess.AuthTime)) {
+	if a.SessionID != "" {
+		return a.SessionID == info.sess.ID
+	}
+	// A flow pending before upgrade still carries the old user/time binding.
+	if a.SessionID == "" && !a.AuthTime.IsZero() && (a.UserID != info.user.ID || !a.AuthTime.Equal(info.sess.AuthTime)) {
 		return false
 	}
-	// prompt=login requires a fresh login. Once that login succeeded for this
-	// pending request, the same browser may continue to the consent decision.
+	// After a fresh login for this request, consent must not require it again.
 	if slices.Contains(a.Prompt, oidc.PromptLogin) && a.AuthTime.IsZero() {
 		return false
 	}
-	if a.MaxAge != nil && s.st.Now().Sub(info.sess.AuthTime) > time.Duration(*a.MaxAge)*time.Second {
+	if a.MaxAge != nil && *a.MaxAge == 0 {
 		return false
+	}
+	if a.MaxAge != nil {
+		age := s.st.Now().Unix() - info.sess.AuthTime.Unix()
+		return age <= 0 || uint64(age) <= uint64(*a.MaxAge)
 	}
 	return true
 }
@@ -57,7 +64,8 @@ func (s *Server) requiresConsent(ctx context.Context, a *store.AuthRequest, user
 	return !covered, err
 }
 
-func (s *Server) completeFlow(ctx context.Context, a *store.AuthRequest, userID string, authTime time.Time, amr []string) (string, bool, string) {
+func (s *Server) completeFlow(ctx context.Context, a *store.AuthRequest, session *store.Session) (string, bool, string) {
+	userID := session.UserID
 	c, allowed := s.appAccess(ctx, a, userID)
 	if !allowed {
 		s.denyApp(ctx, a, userID, c)
@@ -68,12 +76,16 @@ func (s *Server) completeFlow(ctx context.Context, a *store.AuthRequest, userID 
 		return "", false, "internal"
 	}
 	if needsConsent {
-		if err := s.st.AuthenticateAuthRequest(ctx, a.ID, userID, authTime, amr); err != nil {
-			return "", false, "flow_expired"
+		if err := s.st.AuthenticateAuthRequest(ctx, a.ID, session); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return "", false, "flow_expired"
+			}
+			s.log.Error("bind consent to session", "err", err)
+			return "", false, "internal"
 		}
 		return "", true, ""
 	}
-	if !s.approveAppWithAMR(ctx, a, userID, authTime, amr) {
+	if !s.approveAppWithAMR(ctx, a, userID, session.AuthTime, session.AMR) {
 		return "", false, "access_denied"
 	}
 	return callbackURL(a.ID), false, ""
@@ -84,8 +96,12 @@ func (s *Server) completeFlow(ctx context.Context, a *store.AuthRequest, userID 
 func (s *Server) handleLoginStart(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	a, err := s.st.AuthRequestByID(r.Context(), id)
-	if err != nil || a.Status != store.AuthPending {
+	if errors.Is(err, store.ErrNotFound) || err == nil && a.Status != store.AuthPending {
 		http.Redirect(w, r, "/login?error=flow_expired", http.StatusFound)
+		return
+	}
+	if err != nil {
+		http.Redirect(w, r, loginPageURL(id), http.StatusFound)
 		return
 	}
 	info := sessionFrom(r.Context())
@@ -123,7 +139,7 @@ func (s *Server) handleLoginStart(w http.ResponseWriter, r *http.Request) {
 			s.approve(w, r, a, info)
 			return
 		}
-		if err := s.st.AuthenticateAuthRequest(r.Context(), a.ID, info.user.ID, info.sess.AuthTime, a.AMR); err != nil {
+		if err := s.st.AuthenticateAuthRequest(r.Context(), a.ID, info.sess); err != nil {
 			s.internalError(w, r, err)
 			return
 		}
@@ -132,11 +148,7 @@ func (s *Server) handleLoginStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) approve(w http.ResponseWriter, r *http.Request, a *store.AuthRequest, info *sessionInfo) {
-	amr := a.AMR
-	if len(amr) == 0 {
-		amr = passwordAMR
-	}
-	if !s.approveAppWithAMR(r.Context(), a, info.user.ID, info.sess.AuthTime, amr) {
+	if !s.approveAppWithAMR(r.Context(), a, info.user.ID, info.sess.AuthTime, info.sess.AMR) {
 		http.Redirect(w, r, "/login?error=access_denied", http.StatusFound)
 		return
 	}
@@ -187,8 +199,12 @@ func redirectTarget(raw string) string {
 // pendingFlow loads a request that is still waiting for the user.
 func (s *Server) pendingFlow(w http.ResponseWriter, r *http.Request) (*store.AuthRequest, bool) {
 	a, err := s.st.AuthRequestByID(r.Context(), chi.URLParam(r, "id"))
-	if err != nil || a.Status != store.AuthPending {
+	if errors.Is(err, store.ErrNotFound) || err == nil && a.Status != store.AuthPending {
 		writeError(w, http.StatusGone, "flow_expired")
+		return nil, false
+	}
+	if err != nil {
+		s.internalError(w, r, err)
 		return nil, false
 	}
 	return a, true
@@ -200,8 +216,12 @@ func (s *Server) handleFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c, err := s.st.ClientByID(r.Context(), a.ClientID)
-	if err != nil {
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusGone, "flow_expired")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, err)
 		return
 	}
 	needsConsent := slices.Contains(a.Prompt, oidc.PromptConsent)
@@ -239,11 +259,7 @@ func (s *Server) handleFlowContinue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "login_required")
 		return
 	}
-	amr := a.AMR
-	if len(amr) == 0 {
-		amr = passwordAMR
-	}
-	if !s.approveAppWithAMR(r.Context(), a, info.user.ID, info.sess.AuthTime, amr) {
+	if !s.approveAppWithAMR(r.Context(), a, info.user.ID, info.sess.AuthTime, info.sess.AMR) {
 		writeError(w, http.StatusForbidden, "access_denied")
 		return
 	}

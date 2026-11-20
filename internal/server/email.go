@@ -162,26 +162,13 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	userID, err := s.st.ConsumeEmailToken(r.Context(), req.Token, store.EmailReset)
+	u, err := s.st.ResetPasswordWithEmailToken(r.Context(), req.Token, hash)
 	if err != nil {
 		s.writeLinkError(w, err)
 		return
 	}
-	if err := s.st.SetPasswordHash(r.Context(), userID, hash); err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	u, err := s.st.UserByID(r.Context(), userID)
-	if err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	if err := s.st.RevokeUserAccess(r.Context(), userID, ""); err != nil {
-		s.internalError(w, r, err)
-		return
-	}
-	s.audit(r.Context(), store.Event{Type: store.EvPasswordReset, ActorID: userID, IP: s.clientIP(r)})
-	if _, err := s.startSession(w, r, u.ID); err != nil {
+	s.audit(r.Context(), store.Event{Type: store.EvPasswordReset, ActorID: u.ID, IP: s.clientIP(r)})
+	if _, err := s.startSession(w, r, u.ID, "email"); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
