@@ -65,6 +65,7 @@ jobs:
       - name: Typecheck and build web
         working-directory: web
         run: |
+          npm test
           npm run typecheck
           npm run build
 

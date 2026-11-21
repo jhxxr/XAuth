@@ -28,6 +28,8 @@ type totpJSON struct {
 	UserIDs     []string  `json:"userIds,omitempty"`
 	Code        string    `json:"code,omitempty"`
 	Remaining   int       `json:"remaining,omitempty"`
+	GeneratedAt int64     `json:"generatedAt,omitempty"`
+	ExpiresAt   int64     `json:"expiresAt,omitempty"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
@@ -38,8 +40,8 @@ type totpInput struct {
 	Issuer      *string  `json:"issuer"`
 	AccountName *string  `json:"accountName"`
 	Secret      string   `json:"secret"`
-	Digits      int      `json:"digits"`
-	Period      int      `json:"period"`
+	Digits      *int     `json:"digits"`
+	Period      *int     `json:"period"`
 	Algorithm   string   `json:"algorithm"`
 	Note        *string  `json:"note"`
 	UserIDs     []string `json:"userIds"`
@@ -48,13 +50,20 @@ type totpInput struct {
 func (in totpInput) entry() (totp.Entry, error) {
 	return totp.Parse(in.Input, totp.Entry{
 		Secret: in.Secret, Name: in.Name, Issuer: textOf(in.Issuer), AccountName: textOf(in.AccountName),
-		Digits: in.Digits, Period: in.Period, Algorithm: in.Algorithm, Note: textOf(in.Note),
+		Digits: numberOf(in.Digits), Period: numberOf(in.Period), Algorithm: in.Algorithm, Note: textOf(in.Note),
 	})
 }
 
 func textOf(v *string) string {
 	if v == nil {
 		return ""
+	}
+	return *v
+}
+
+func numberOf(v *int) int {
+	if v == nil {
+		return 0
 	}
 	return *v
 }
@@ -75,6 +84,8 @@ func totpCodeJSON(c store.TotpCode) totpJSON {
 	out := totpToJSON(c.Entry)
 	out.Code = c.Code
 	out.Remaining = c.Remaining
+	out.GeneratedAt = c.GeneratedAt.UnixMilli()
+	out.ExpiresAt = c.ExpiresAt.UnixMilli()
 	out.UserIDs = nil
 	return out
 }
@@ -87,9 +98,8 @@ func (s *Server) handleListAdminTotp(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]totpJSON, 0, len(codes))
 	for _, c := range codes {
-		item := totpToJSON(c.Entry)
-		item.Code = c.Code
-		item.Remaining = c.Remaining
+		item := totpCodeJSON(c)
+		item.UserIDs = c.Entry.UserIDs
 		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"entries": out})
@@ -140,6 +150,7 @@ func (s *Server) handleUpdateAdminTotp(w http.ResponseWriter, r *http.Request) {
 	e := entryFromParsed(parsed, "", info.user.ID)
 	e.ID = current.ID
 	e.CreatedBy = current.CreatedBy
+	e.CreatedAt = current.CreatedAt
 	if err := s.st.UpdateTotpEntry(r.Context(), e, secret); err != nil {
 		s.writeTotpStoreError(w, r, err)
 		return
@@ -250,6 +261,7 @@ func (s *Server) handleUpdateMyTotp(w http.ResponseWriter, r *http.Request) {
 	}
 	e := entryFromParsed(parsed, info.user.ID, current.CreatedBy)
 	e.ID = current.ID
+	e.CreatedAt = current.CreatedAt
 	if err := s.st.UpdateTotpEntry(r.Context(), e, secret); err != nil {
 		s.writeTotpStoreError(w, r, err)
 		return
@@ -310,6 +322,20 @@ func (s *Server) mergeTotp(w http.ResponseWriter, current *store.TotpEntry, in t
 	}
 	var secret string
 	if strings.TrimSpace(in.Input) != "" || strings.TrimSpace(in.Secret) != "" {
+		isURL := strings.HasPrefix(strings.ToLower(strings.TrimSpace(in.Input)), "otpauth://")
+		// Replacing only a raw secret keeps the entry's existing OTP options.
+		// A complete otpauth URI supplies its own options and defaults.
+		if !isURL {
+			if in.Digits == nil {
+				in.Digits = &current.Digits
+			}
+			if in.Period == nil {
+				in.Period = &current.Period
+			}
+			if in.Algorithm == "" {
+				in.Algorithm = current.Algorithm
+			}
+		}
 		parsed, err := in.entry()
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_totp")
@@ -319,10 +345,10 @@ func (s *Server) mergeTotp(w http.ResponseWriter, current *store.TotpEntry, in t
 		if strings.TrimSpace(in.Name) == "" {
 			parsed.Name = current.Name
 		}
-		if in.Issuer == nil && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(in.Input)), "otpauth://") {
+		if in.Issuer == nil && !isURL {
 			parsed.Issuer = current.Issuer
 		}
-		if in.AccountName == nil && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(in.Input)), "otpauth://") {
+		if in.AccountName == nil && !isURL {
 			parsed.AccountName = current.AccountName
 		}
 		if in.Note == nil {
@@ -342,11 +368,11 @@ func (s *Server) mergeTotp(w http.ResponseWriter, current *store.TotpEntry, in t
 	if in.Note != nil {
 		next.Note = strings.TrimSpace(*in.Note)
 	}
-	if in.Digits != 0 {
-		next.Digits = in.Digits
+	if in.Digits != nil {
+		next.Digits = *in.Digits
 	}
-	if in.Period != 0 {
-		next.Period = in.Period
+	if in.Period != nil {
+		next.Period = *in.Period
 	}
 	if in.Algorithm != "" {
 		next.Algorithm = in.Algorithm
@@ -361,6 +387,10 @@ func (s *Server) mergeTotp(w http.ResponseWriter, current *store.TotpEntry, in t
 }
 
 func (s *Server) validTotpInput(w http.ResponseWriter, in totpInput, creating bool) bool {
+	if in.Digits != nil && (*in.Digits < 6 || *in.Digits > 8) || in.Period != nil && (*in.Period < 1 || *in.Period > 86400) {
+		writeError(w, http.StatusBadRequest, "invalid_totp")
+		return false
+	}
 	if utf8.RuneCountInString(in.Input) > totpInputLimit || utf8.RuneCountInString(in.Secret) > totpInputLimit {
 		writeError(w, http.StatusBadRequest, "invalid_totp")
 		return false

@@ -7,6 +7,7 @@ require (
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/go-webauthn/webauthn v0.18.2
+	github.com/pquerna/otp v1.5.0
 	github.com/rs/cors v1.11.1
 	github.com/zitadel/oidc/v3 v3.51.16
 	golang.org/x/crypto v0.58.0
@@ -18,6 +19,7 @@ require (
 require (
 	filippo.io/hpke v0.4.0 // indirect
 	github.com/bmatcuk/doublestar/v4 v4.10.3 // indirect
+	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.4 // indirect

@@ -478,6 +478,11 @@ export type TotpEntry = {
   userIds?: string[];
   code?: string;
   remaining?: number;
+  /** Unix milliseconds in the server's clock; used as a duration, never compared to the browser clock. */
+  generatedAt?: number;
+  expiresAt?: number;
+  /** Browser-local deadline assigned when loading codes. */
+  validUntil?: number;
   createdAt: string;
   updatedAt: string;
 };

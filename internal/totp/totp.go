@@ -3,19 +3,16 @@
 package totp
 
 import (
-	"crypto/hmac"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/sha512"
 	"encoding/base32"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"hash"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pquerna/otp"
+	openotp "github.com/pquerna/otp/totp"
 )
 
 // Algorithms accepted by RFC 6238.
@@ -28,6 +25,8 @@ const (
 const (
 	defaultDigits = 6
 	defaultPeriod = 30
+	// Bound the UI refresh interval while preserving nonstandard OTP periods.
+	maxPeriod = 86400
 )
 
 // ErrInvalid describes a secret or otpauth URL the user can correct.
@@ -82,9 +81,18 @@ func Parse(input string, overrides Entry) (Entry, error) {
 	if overrides.AccountName != "" {
 		parsed.AccountName = strings.TrimSpace(overrides.AccountName)
 	}
-	parsed.Digits = normalizeDigits(firstPositive(overrides.Digits, parsed.Digits))
-	parsed.Period = normalizePeriod(firstPositive(overrides.Period, parsed.Period))
-	parsed.Algorithm = normalizeAlgorithm(firstText(overrides.Algorithm, parsed.Algorithm))
+	if overrides.Digits != 0 {
+		parsed.Digits = overrides.Digits
+	}
+	if overrides.Period != 0 {
+		parsed.Period = overrides.Period
+	}
+	if overrides.Algorithm != "" {
+		parsed.Algorithm = overrides.Algorithm
+	}
+	if err := normalizeParameters(&parsed); err != nil {
+		return Entry{}, err
+	}
 	parsed.Note = strings.TrimSpace(firstText(overrides.Note, parsed.Note))
 	parsed.Name = displayName(parsed.Issuer, parsed.AccountName, overrides.Name)
 	return parsed, nil
@@ -95,10 +103,22 @@ func parseURL(raw string) (Entry, error) {
 	if err != nil || !strings.EqualFold(u.Scheme, "otpauth") {
 		return Entry{}, fmt.Errorf("%w: bad url", ErrInvalid)
 	}
-	if !strings.EqualFold(u.Host, "totp") {
+	if !strings.EqualFold(u.Host, "totp") || u.User != nil || u.Fragment != "" {
 		return Entry{}, fmt.Errorf("%w: only totp", ErrInvalid)
 	}
-	secret := u.Query().Get("secret")
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return Entry{}, fmt.Errorf("%w: bad query", ErrInvalid)
+	}
+	for _, name := range []string{"secret", "issuer", "digits", "period", "algorithm", "encoder"} {
+		if len(q[name]) > 1 {
+			return Entry{}, fmt.Errorf("%w: duplicate %s", ErrInvalid, name)
+		}
+	}
+	if q.Get("encoder") != "" {
+		return Entry{}, fmt.Errorf("%w: unsupported encoder", ErrInvalid)
+	}
+	secret := q.Get("secret")
 	if secret == "" {
 		return Entry{}, fmt.Errorf("%w: missing secret", ErrInvalid)
 	}
@@ -106,10 +126,8 @@ func parseURL(raw string) (Entry, error) {
 	if err != nil {
 		return Entry{}, err
 	}
-	label, err := url.PathUnescape(strings.TrimPrefix(u.Path, "/"))
-	if err != nil {
-		label = strings.TrimPrefix(u.EscapedPath(), "/")
-	}
+	// url.Parse has already unescaped Path; decoding it twice changes labels.
+	label := strings.TrimLeft(u.Path, "/")
 	var issuer, account string
 	if label != "" {
 		if head, tail, ok := strings.Cut(label, ":"); ok {
@@ -119,15 +137,38 @@ func parseURL(raw string) (Entry, error) {
 			account = strings.TrimSpace(label)
 		}
 	}
-	if q := strings.TrimSpace(u.Query().Get("issuer")); q != "" {
-		issuer = q
+	if value := strings.TrimSpace(q.Get("issuer")); value != "" {
+		issuer = value
 	}
-	digits, _ := strconv.Atoi(u.Query().Get("digits"))
-	period, _ := strconv.Atoi(u.Query().Get("period"))
-	return Entry{
+	digits, err := urlNumber(q, "digits", defaultDigits)
+	if err != nil {
+		return Entry{}, err
+	}
+	period, err := urlNumber(q, "period", defaultPeriod)
+	if err != nil {
+		return Entry{}, err
+	}
+	parsed := Entry{
 		Secret: normalized, Issuer: issuer, AccountName: account,
-		Digits: digits, Period: period, Algorithm: u.Query().Get("algorithm"),
-	}, nil
+		Digits: digits, Period: period, Algorithm: q.Get("algorithm"),
+	}
+	// Validate the URL before applying overrides: a bad link must never turn
+	// into a plausible-looking entry just because the form sent defaults.
+	if err := normalizeParameters(&parsed); err != nil {
+		return Entry{}, err
+	}
+	return parsed, nil
+}
+
+func urlNumber(q url.Values, name string, fallback int) (int, error) {
+	if !q.Has(name) {
+		return fallback, nil
+	}
+	v, err := strconv.ParseUint(q.Get(name), 10, 32)
+	if err != nil || v == 0 {
+		return 0, fmt.Errorf("%w: %s", ErrInvalid, name)
+	}
+	return int(v), nil
 }
 
 func normalizeSecret(secret string) (string, error) {
@@ -159,29 +200,24 @@ func decodeBase32(secret string) ([]byte, error) {
 	return b, nil
 }
 
-func normalizeDigits(v int) int {
-	if v < 6 || v > 8 {
-		return defaultDigits
+func normalizeParameters(e *Entry) error {
+	if e.Digits == 0 {
+		e.Digits = defaultDigits
 	}
-	return v
-}
-
-func normalizePeriod(v int) int {
-	if v < 15 || v > 120 {
-		return defaultPeriod
+	if e.Period == 0 {
+		e.Period = defaultPeriod
 	}
-	return v
-}
-
-func normalizeAlgorithm(v string) string {
-	switch strings.ToUpper(strings.TrimSpace(v)) {
-	case SHA256:
-		return SHA256
-	case SHA512:
-		return SHA512
-	default:
-		return SHA1
+	if e.Digits < 6 || e.Digits > 8 || e.Period < 1 || e.Period > maxPeriod {
+		return fmt.Errorf("%w: digits or period", ErrInvalid)
 	}
+	e.Algorithm = strings.ToUpper(strings.TrimSpace(e.Algorithm))
+	if e.Algorithm == "" {
+		e.Algorithm = SHA1
+	}
+	if e.Algorithm != SHA1 && e.Algorithm != SHA256 && e.Algorithm != SHA512 {
+		return fmt.Errorf("%w: algorithm", ErrInvalid)
+	}
+	return nil
 }
 
 func displayName(issuer, account, fallback string) string {
@@ -200,13 +236,6 @@ func displayName(issuer, account, fallback string) string {
 	return "未命名验证器"
 }
 
-func firstPositive(a, b int) int {
-	if a > 0 {
-		return a
-	}
-	return b
-}
-
 func firstText(a, b string) string {
 	if strings.TrimSpace(a) != "" {
 		return a
@@ -216,43 +245,34 @@ func firstText(a, b string) string {
 
 // Code returns the code for entry at the given time.
 func Code(entry Entry, now time.Time) (string, error) {
-	key, err := decodeBase32(entry.Secret)
+	secret, err := normalizeSecret(entry.Secret)
 	if err != nil {
 		return "", err
 	}
-	digits := normalizeDigits(entry.Digits)
-	period := normalizePeriod(entry.Period)
-	counter := uint64(now.Unix()) / uint64(period)
-	var buf [8]byte
-	binary.BigEndian.PutUint64(buf[:], counter)
-
-	var h func() hash.Hash
-	switch normalizeAlgorithm(entry.Algorithm) {
+	if err := normalizeParameters(&entry); err != nil {
+		return "", err
+	}
+	algorithm := otp.AlgorithmSHA1
+	switch entry.Algorithm {
 	case SHA256:
-		h = sha256.New
+		algorithm = otp.AlgorithmSHA256
 	case SHA512:
-		h = sha512.New
-	default:
-		h = sha1.New
+		algorithm = otp.AlgorithmSHA512
 	}
-	mac := hmac.New(h, key)
-	mac.Write(buf[:])
-	sum := mac.Sum(nil)
-	offset := sum[len(sum)-1] & 0x0f
-	bin := binary.BigEndian.Uint32(sum[offset:offset+4]) & 0x7fffffff
-	mod := uint32(1)
-	for i := 0; i < digits; i++ {
-		mod *= 10
+	return openotp.GenerateCodeCustom(secret, now, openotp.ValidateOpts{
+		Period: uint(entry.Period), Digits: otp.Digits(entry.Digits), Algorithm: algorithm,
+	})
+}
+
+// ExpiresAt returns the exact end of the current time step.
+func ExpiresAt(period int, now time.Time) time.Time {
+	if period <= 0 {
+		period = defaultPeriod
 	}
-	return fmt.Sprintf("%0*d", digits, bin%mod), nil
+	return time.Unix((now.Unix()/int64(period)+1)*int64(period), 0)
 }
 
 // RemainingSeconds is how long the current code stays valid.
 func RemainingSeconds(period int, now time.Time) int {
-	period = normalizePeriod(period)
-	left := period - int(now.Unix()%int64(period))
-	if left == 0 {
-		return period
-	}
-	return left
+	return int((ExpiresAt(period, now).Sub(now) + time.Second - 1) / time.Second)
 }

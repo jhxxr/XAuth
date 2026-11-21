@@ -83,7 +83,7 @@ func TestTotpVisibilityAndGrants(t *testing.T) {
 func TestTotpCodeMatchesRFC(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
-	s.SetClock(func() time.Time { return time.Unix(59, 0) })
+	s.SetClock(func() time.Time { return time.Unix(59, 500000000) })
 	u := &User{Email: "ada@example.com", PasswordHash: "x"}
 	if err := s.CreateUser(ctx, u); err != nil {
 		t.Fatal(err)
@@ -98,5 +98,16 @@ func TestTotpCodeMatchesRFC(t *testing.T) {
 	}
 	if codes[0].Code != "94287082" || codes[0].Remaining != 1 {
 		t.Fatalf("%+v", codes[0])
+	}
+	if !codes[0].GeneratedAt.Equal(time.Unix(59, 500000000)) || !codes[0].ExpiresAt.Equal(time.Unix(60, 0)) {
+		t.Fatalf("incorrect validity window: %+v", codes[0])
+	}
+	s.SetClock(func() time.Time { return time.Unix(60, 0) })
+	next, err := s.TotpCodes(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next[0].Code != "37359152" || next[0].Remaining != 30 || !next[0].ExpiresAt.Equal(time.Unix(90, 0)) {
+		t.Fatalf("did not advance to the next time step: %+v", next[0])
 	}
 }

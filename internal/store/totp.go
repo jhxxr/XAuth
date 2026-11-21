@@ -33,9 +33,11 @@ type TotpEntry struct {
 
 // TotpCode is a code the caller is allowed to see.
 type TotpCode struct {
-	Entry     TotpEntry
-	Code      string
-	Remaining int
+	Entry       TotpEntry
+	Code        string
+	Remaining   int
+	GeneratedAt time.Time
+	ExpiresAt   time.Time
 }
 
 // ErrTotpPrivate is returned when a shared-entry operation targets a personal entry.
@@ -290,7 +292,10 @@ func (s *Store) codesFor(ctx context.Context, entries []TotpEntry) ([]TotpCode, 
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, TotpCode{Entry: e, Code: code, Remaining: totp.RemainingSeconds(e.Period, now)})
+		out = append(out, TotpCode{
+			Entry: e, Code: code, Remaining: totp.RemainingSeconds(e.Period, now),
+			GeneratedAt: now, ExpiresAt: totp.ExpiresAt(e.Period, now),
+		})
 	}
 	return out, nil
 }

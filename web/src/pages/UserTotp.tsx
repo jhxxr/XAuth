@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, errorMessage, type TotpEntry } from "../api";
 import { Dialog, useToast } from "../components/Dialog";
 import { AppShell } from "../components/Shell";
@@ -6,22 +6,13 @@ import { Icon } from "../components/Icon";
 import { Button, EmptyState, Notice } from "../components/ui";
 import { TotpCard } from "./TotpCard";
 import { TotpForm, type TotpDraft } from "./TotpForm";
+import { useTotpEntries } from "../useTotpEntries";
 
 export function UserTotpPage() {
   const toast = useToast();
-  const [rows, setRows] = useState<TotpEntry[] | null>(null);
-  const [error, setError] = useState("");
+  const { rows, error, clockWarning, setError, load } = useTotpEntries(api.myTotp);
   const [editing, setEditing] = useState<TotpEntry | null>(null);
   const [creating, setCreating] = useState(false);
-
-  const load = () => api.myTotp().then((r) => setRows(r.entries)).catch((e) => setError(errorMessage(e)));
-  useEffect(() => { void load(); }, []);
-  useEffect(() => {
-    const soonest = rows?.reduce((min, e) => Math.min(min, e.remaining || e.period || 30), 30) ?? 0;
-    if (!soonest) return;
-    const timer = window.setTimeout(() => { void load(); }, soonest * 1000);
-    return () => window.clearTimeout(timer);
-  }, [rows]);
 
   const save = async (draft: TotpDraft) => {
     if (editing) await api.updateMyTotp(editing.id, draft);
@@ -58,6 +49,7 @@ export function UserTotpPage() {
       actions={<Button onClick={() => setCreating(true)}><Icon name="plus" className="size-4" />添加私人验证器</Button>}
     >
       {error && <div className="mb-4"><Notice>{error}</Notice></div>}
+      {clockWarning && <div className="mb-4"><Notice tone="info">{clockWarning}</Notice></div>}
       {rows?.length === 0 && (
         <EmptyState
           icon="timer"

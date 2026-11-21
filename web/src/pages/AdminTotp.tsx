@@ -6,27 +6,18 @@ import { Icon } from "../components/Icon";
 import { Avatar, Button, EmptyState, Notice } from "../components/ui";
 import { TotpCard } from "./TotpCard";
 import { TotpForm, type TotpDraft } from "./TotpForm";
+import { useTotpEntries } from "../useTotpEntries";
 
 export function AdminTotpPage() {
   const toast = useToast();
-  const [rows, setRows] = useState<TotpEntry[] | null>(null);
+  const { rows, error, clockWarning, setError, load } = useTotpEntries(api.adminTotp);
   const [users, setUsers] = useState<User[]>([]);
-  const [error, setError] = useState("");
   const [editing, setEditing] = useState<TotpEntry | null>(null);
   const [creating, setCreating] = useState(false);
 
-  const load = () => api.adminTotp().then((r) => setRows(r.entries)).catch((e) => setError(errorMessage(e)));
-  useEffect(() => { void load(); }, []);
   useEffect(() => {
     api.users().then((r) => setUsers(r.users.filter((u) => !u.disabled))).catch(() => setUsers([]));
   }, []);
-  useEffect(() => {
-    const soonest = rows?.reduce((min, e) => Math.min(min, e.remaining || e.period || 30), 30) ?? 0;
-    if (!soonest) return;
-    const timer = window.setTimeout(() => { void load(); }, soonest * 1000);
-    return () => window.clearTimeout(timer);
-  }, [rows]);
-
   const save = async (draft: TotpDraft) => {
     const body = { ...draft, userIds: draft.userIds ?? [] };
     if (editing) await api.updateAdminTotp(editing.id, body);
@@ -48,6 +39,7 @@ export function AdminTotpPage() {
       actions={<Button onClick={() => setCreating(true)}><Icon name="plus" className="size-4" />添加验证器</Button>}
     >
       {error && <div className="mb-4"><Notice>{error}</Notice></div>}
+      {clockWarning && <div className="mb-4"><Notice tone="info">{clockWarning}</Notice></div>}
       {rows?.length === 0 && (
         <EmptyState
           icon="timer"

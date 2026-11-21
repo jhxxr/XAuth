@@ -23,8 +23,7 @@ export function TotpForm({
   const [userIds, setUserIds] = useState<string[]>(entry?.userIds ?? []);
   const formRef = useRef<HTMLFormElement>(null);
 
-  // QR import writes straight into the uncontrolled fields; FormData picks the
-  // values up on submit. otpauth parameters also replace the 6/30/SHA1 defaults.
+  // Both manual pasting and QR import must populate the same parameters.
   const applyDecoded = useCallback((raw: string) => {
     const form = formRef.current;
     if (!form) return;
@@ -38,20 +37,33 @@ export function TotpForm({
     };
     set("input", raw);
     const parsed = parseOtpauth(raw);
-    if (!parsed) return;
+    if (!parsed) {
+      if (/^otpauth:\/\//i.test(raw.trim())) {
+        setError("无法导入这个验证器链接。请检查密钥、算法、位数和周期；目前支持 SHA1/SHA256/SHA512、6–8 位和 1–86400 秒。");
+      } else {
+        setError("");
+      }
+      return;
+    }
+    setError("");
     // A scanned entry replaces the previous metadata; omitted otpauth values
     // fall back to the same defaults the server would use.
     set("name", parsed.name ?? "");
     set("issuer", parsed.issuer ?? "");
     set("accountName", parsed.accountName ?? "");
-    set("digits", parsed.digits ?? 6);
-    set("period", parsed.period ?? 30);
-    set("algorithm", parsed.algorithm ?? "SHA1");
+    set("digits", parsed.digits);
+    set("period", parsed.period);
+    set("algorithm", parsed.algorithm);
   }, []);
 
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
+    const input = String(data.get("input") ?? "").trim();
+    if (/^otpauth:\/\//i.test(input) && !parseOtpauth(input)) {
+      setError("验证器链接参数无效，无法生成正确的验证码。请检查后重试。");
+      return;
+    }
     const digits = Number(data.get("digits"));
     const period = Number(data.get("period"));
     setBusy(true);
@@ -85,6 +97,7 @@ export function TotpForm({
         name="input"
         required={!entry}
         spellCheck={false}
+        onChange={(e) => applyDecoded(e.currentTarget.value)}
         placeholder="Base32 密钥，或 otpauth://totp/..."
         hint={entry ? "留空则保持原来的密钥。粘贴 otpauth 链接会同时更新参数。" : "支持 Base32 密钥和 otpauth://totp 链接。密钥只保存在服务器上。"}
       />
@@ -97,8 +110,8 @@ export function TotpForm({
       <fieldset className="rounded-xl border border-line bg-desk/30 p-4">
         <legend className="eyebrow -ml-1 px-1">参数</legend>
         <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="位数" name="digits" type="number" min={6} max={8} defaultValue={entry?.digits ?? 6} />
-          <Field label="周期（秒）" name="period" type="number" min={15} max={120} defaultValue={entry?.period ?? 30} />
+          <Field label="位数" name="digits" type="number" required min={6} max={8} defaultValue={entry?.digits ?? 6} />
+          <Field label="周期（秒）" name="period" type="number" required min={1} max={86400} step={1} defaultValue={entry?.period ?? 30} />
           <label className="block text-[0.8125rem] font-medium">
             算法
             <select name="algorithm" defaultValue={entry?.algorithm ?? "SHA1"} className="field mt-1.5">

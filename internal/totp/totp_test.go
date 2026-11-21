@@ -2,10 +2,77 @@ package totp
 
 import (
 	"bytes"
+	"encoding/base32"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 )
+
+// RFC 6238 appendix B uses a different key length for each hash algorithm.
+func TestRFC6238AllAlgorithms(t *testing.T) {
+	secrets := map[string]string{
+		SHA1:   "12345678901234567890",
+		SHA256: "12345678901234567890123456789012",
+		SHA512: "1234567890123456789012345678901234567890123456789012345678901234",
+	}
+	cases := []struct {
+		unix  int64
+		codes [3]string
+	}{
+		{59, [3]string{"94287082", "46119246", "90693936"}},
+		{1111111109, [3]string{"07081804", "68084774", "25091201"}},
+		{1111111111, [3]string{"14050471", "67062674", "99943326"}},
+		{1234567890, [3]string{"89005924", "91819424", "93441116"}},
+		{2000000000, [3]string{"69279037", "90698825", "38618901"}},
+		{20000000000, [3]string{"65353130", "77737706", "47863826"}},
+	}
+	for _, tc := range cases {
+		for i, algorithm := range []string{SHA1, SHA256, SHA512} {
+			entry := Entry{Secret: base32.StdEncoding.EncodeToString([]byte(secrets[algorithm])), Digits: 8, Algorithm: algorithm}
+			got, err := Code(entry, time.Unix(tc.unix, 0))
+			if err != nil || got != tc.codes[i] {
+				t.Errorf("%s at %d: got %q, %v; want %s", algorithm, tc.unix, got, err, tc.codes[i])
+			}
+		}
+	}
+}
+
+func TestParsePreservesNonDefaultPeriod(t *testing.T) {
+	for _, period := range []int{1, 10, 300, 86400} {
+		got, err := Parse("JBSWY3DPEHPK3PXP", Entry{Period: period})
+		if err != nil || got.Period != period {
+			t.Errorf("period %d: got %d, %v", period, got.Period, err)
+		}
+	}
+}
+
+func TestParseRejectsInvalidParameters(t *testing.T) {
+	for _, query := range []string{
+		"digits=5", "digits=9", "digits=0", "digits=wrong", "digits=6.5",
+		"period=0", "period=-30", "period=wrong", "period=30.5", "period=86401",
+		"algorithm=MD5", "algorithm=SHA3", "encoder=steam", "secret=JBSWY3DPEHPK3PXP",
+	} {
+		t.Run(query, func(t *testing.T) {
+			_, err := Parse("otpauth://totp/test?secret=JBSWY3DPEHPK3PXP&"+query, Entry{})
+			if !errors.Is(err, ErrInvalid) {
+				t.Fatalf("accepted invalid parameters: %v", err)
+			}
+		})
+	}
+	for _, overrides := range []Entry{{Digits: -1}, {Digits: 9}, {Period: -1}, {Period: 86401}, {Algorithm: "MD5"}} {
+		if _, err := Parse("JBSWY3DPEHPK3PXP", overrides); !errors.Is(err, ErrInvalid) {
+			t.Errorf("accepted invalid overrides %+v: %v", overrides, err)
+		}
+	}
+}
+
+func TestParseLabelUnescapesOnce(t *testing.T) {
+	got, err := Parse("otpauth://totp/Example:alice%252Fbob?secret=JBSWY3DPEHPK3PXP", Entry{})
+	if err != nil || got.AccountName != "alice%2Fbob" {
+		t.Fatalf("got account %q, %v", got.AccountName, err)
+	}
+}
 
 // RFC 6238 appendix B, 8-digit SHA1, secret ASCII "12345678901234567890".
 func TestRFC6238SHA1(t *testing.T) {

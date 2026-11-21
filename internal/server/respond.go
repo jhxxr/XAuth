@@ -57,7 +57,7 @@ var errorMessages = map[string]string{
 	"invalid_mailbox":        "邮箱地址无效。",
 	"invalid_query":          "查询参数无效。",
 	"body_too_large":         "请求内容过大。",
-	"invalid_totp":           "验证器密钥无效。请粘贴 Base32 密钥或 otpauth://totp 链接。",
+	"invalid_totp":           "验证器密钥或参数无效。请使用 Base32 密钥或 otpauth://totp 链接，算法支持 SHA1/SHA256/SHA512，位数为 6–8，周期为 1–86400 秒。",
 	"invalid_avatar":         "头像图片无法读取，请换一张图片再试。",
 	"invalid_avatar_type":    "头像只支持 PNG、JPEG、WebP 或 GIF 格式。",
 	"avatar_too_large":       "头像不能超过 1 MB。",
