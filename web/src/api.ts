@@ -93,6 +93,8 @@ export type App = {
   updatedAt: string;
 };
 
+export type AssignedApp = { clientId: string; clientName: string };
+
 export type Endpoints = {
   issuer: string;
   discovery: string;
@@ -210,6 +212,7 @@ export const api = {
   sessions: () => request<{ sessions: DeviceSession[] }>("GET", "/api/sessions"),
   deleteSession: (id: string) => request<{ ok: boolean }>("DELETE", `/api/sessions/${id}`),
   revokeOtherSessions: () => request<{ revoked: number }>("POST", "/api/sessions/revoke-others"),
+  assignedApps: () => request<{ apps: AssignedApp[] }>("GET", "/api/account/apps"),
   grants: () => request<{ grants: Grant[] }>("GET", "/api/grants"),
   revokeGrant: (clientId: string) => request<{ ok: boolean }>("DELETE", `/api/grants/${clientId}`),
 

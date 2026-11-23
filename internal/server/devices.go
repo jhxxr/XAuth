@@ -79,6 +79,28 @@ func (s *Server) handleRevokeOtherSessions(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"revoked": n})
 }
 
+type assignedAppJSON struct {
+	ClientID   string `json:"clientId"`
+	ClientName string `json:"clientName"`
+}
+
+func (s *Server) handleListAssignedApps(w http.ResponseWriter, r *http.Request) {
+	info, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.st.ListAssignedClients(r.Context(), info.user.ID)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	apps := make([]assignedAppJSON, 0, len(rows))
+	for _, row := range rows {
+		apps = append(apps, assignedAppJSON{ClientID: row.ID, ClientName: row.Name})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"apps": apps})
+}
+
 type grantJSON struct {
 	ClientID        string    `json:"clientId"`
 	ClientName      string    `json:"clientName"`

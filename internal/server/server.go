@@ -132,6 +132,7 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/reset-password", s.handleResetPassword)
 			r.Post("/logout", s.handleLogout)
 			r.Patch("/account", s.handleUpdateAccount)
+			r.Get("/account/apps", s.handleListAssignedApps)
 			r.Put("/account/avatar", s.handleSetAvatar)
 			r.Delete("/account/avatar", s.handleDeleteAvatar)
 			r.Get("/users/{id}/avatar", s.handleAvatar)

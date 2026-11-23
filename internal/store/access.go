@@ -29,6 +29,32 @@ func (s *Store) UserMayUseClient(ctx context.Context, u *User, c *Client) (bool,
 	}
 }
 
+// AssignedClient is the display information for an app explicitly assigned to a user.
+type AssignedClient struct {
+	ID   string
+	Name string
+}
+
+// ListAssignedClients lists current per-user assignments, not OAuth consents.
+func (s *Store) ListAssignedClients(ctx context.Context, userID string) ([]AssignedClient, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT c.id, c.name FROM client_users cu JOIN clients c ON c.id = cu.client_id
+		WHERE cu.user_id = ? AND c.access = ? ORDER BY c.name, c.id`, userID, AccessSelected)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AssignedClient{}
+	for rows.Next() {
+		var c AssignedClient
+		if err := rows.Scan(&c.ID, &c.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // ClientUserIDs returns the users allowed to use a client in selected mode.
 func (s *Store) ClientUserIDs(ctx context.Context, clientID string) ([]string, error) {
 	return clientUserIDs(ctx, s.db, clientID)

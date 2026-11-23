@@ -53,6 +53,82 @@ func TestSessionsAndRevokeOthers(t *testing.T) {
 	}
 }
 
+func TestAssignedAppsReflectAdminBindingsWithoutOIDCConsent(t *testing.T) {
+	e := newEnv(t)
+	const pw = "correct horse"
+	admin := e.user("apps-admin@example.com", pw, true)
+	member := e.user("assigned@example.com", pw, false)
+	other := e.user("unassigned@example.com", pw, false)
+	app, _ := e.app(store.ClientWeb, rpCallback)
+	e.app(store.ClientWeb, rpCallback) // An app open to everyone is not an explicit assignment.
+
+	const path = "/api/account/apps"
+	if r := e.api(e.browser(), http.MethodGet, path, nil); r.status != http.StatusUnauthorized {
+		t.Fatalf("anonymous request: %d %s", r.status, r.body)
+	}
+	ad, me, stranger := e.browser(), e.browser(), e.browser()
+	login(e, ad, admin.Email, pw)
+	login(e, me, member.Email, pw)
+	login(e, stranger, other.Email, pw)
+
+	updateApp := func(body map[string]any) {
+		t.Helper()
+		if r := e.api(ad, http.MethodPatch, "/api/admin/apps/"+app.ID, body); r.status != http.StatusOK {
+			t.Fatalf("update assignment: %d %s", r.status, r.body)
+		}
+	}
+	assertApps := func(browser *http.Client, assigned bool) {
+		t.Helper()
+		var listed struct {
+			Apps []struct{ ClientID, ClientName string }
+		}
+		r := e.api(browser, http.MethodGet, path, nil)
+		if r.status != http.StatusOK {
+			t.Fatalf("list assigned apps: %d %s", r.status, r.body)
+		}
+		r.json(t, &listed)
+		if assigned {
+			if len(listed.Apps) != 1 || listed.Apps[0].ClientID != app.ID || listed.Apps[0].ClientName != app.Name {
+				t.Fatalf("expected only the assigned app: %+v", listed.Apps)
+			}
+		} else if listed.Apps == nil || len(listed.Apps) != 0 {
+			t.Fatalf("expected an empty apps array: %s", r.body)
+		}
+	}
+	assertNoGrants := func() {
+		t.Helper()
+		var listed struct{ Grants []struct{ ClientID string } }
+		r := e.api(me, http.MethodGet, "/api/grants", nil)
+		if r.status != http.StatusOK {
+			t.Fatalf("list grants: %d %s", r.status, r.body)
+		}
+		r.json(t, &listed)
+		if len(listed.Grants) != 0 {
+			t.Fatalf("assignment appeared as OAuth consent: %+v", listed.Grants)
+		}
+	}
+
+	updateApp(map[string]any{"access": "selected", "allowedUserIds": []string{member.ID}})
+	assertApps(me, true)
+	assertApps(stranger, false)
+	assertApps(ad, false)
+	assertNoGrants()
+
+	if err := e.st.GrantConsent(t.Context(), member.ID, app.ID, []string{"openid"}); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.api(me, http.MethodDelete, "/api/grants/"+app.ID, nil); r.status != http.StatusOK {
+		t.Fatalf("revoke login consent: %d %s", r.status, r.body)
+	}
+	assertNoGrants()
+	assertApps(me, true)
+
+	updateApp(map[string]any{"access": "all"})
+	assertApps(me, false) // The stale selected-mode list is not in effect.
+	updateApp(map[string]any{"access": "selected", "allowedUserIds": []string{}})
+	assertApps(me, false)
+}
+
 func TestAppAccessAdminsOnly(t *testing.T) {
 	e := newEnv(t)
 	admin := e.user("root@example.com", "correct horse", true)

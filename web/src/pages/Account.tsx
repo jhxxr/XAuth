@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   api,
   errorMessage,
+  type AssignedApp,
   type DeviceSession,
   type Grant,
   type MyMailbox,
@@ -59,23 +60,27 @@ function wideMrz(name: string, id: string, role: string): [string, string] {
   ];
 }
 
+type DashboardApp = AssignedApp & { assigned: boolean; grant?: Grant };
+
 /**
- * Tier 1: Sovereign Identity Pass with Authorized External Apps on the right.
+ * Tier 1: Sovereign Identity Pass with external applications on the right.
  */
 function SovereignDossierHero({
   user,
   issuer,
   sessions,
   passkeys,
-  grants,
-  onReload,
+  apps,
+  appsError,
+  onReloadApps,
 }: {
   user: User;
   issuer: string;
   sessions: DeviceSession[] | null;
   passkeys: Passkey[] | null;
-  grants: Grant[] | null;
-  onReload: () => void;
+  apps: DashboardApp[] | null;
+  appsError: string;
+  onReloadApps: () => void;
 }) {
   const toast = useToast();
   const s = seedFrom(user.id);
@@ -87,11 +92,11 @@ function SovereignDossierHero({
   const serial = `XAU-${user.id.slice(0, 4).toUpperCase()}-${user.id.slice(-4).toUpperCase()}`;
 
   const revokeApp = async (row: Grant) => {
-    if (!window.confirm(`撤销应用「${row.clientName}」的授权？`)) return;
+    if (!window.confirm(`撤销应用「${row.clientName}」的登录授权？这不会影响管理员分配。`)) return;
     try {
       await api.revokeGrant(row.clientId);
-      toast("已撤销应用授权");
-      onReload();
+      toast("已撤销应用登录授权");
+      onReloadApps();
     } catch (e) {
       toast(errorMessage(e));
     }
@@ -238,32 +243,44 @@ function SovereignDossierHero({
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Icon name="apps" className="size-4 text-stamp" />
-                <h3 className="text-sm font-semibold text-ink">已授权的外部应用</h3>
+                <h3 className="text-sm font-semibold text-ink">外部应用</h3>
               </div>
-              <Badge tone="plain">{grants?.length ?? 0} 个</Badge>
+              {apps && !appsError && <Badge tone="plain">{apps.length} 个</Badge>}
             </div>
-            <p className="mt-1 text-xs text-ink-soft">通过 OIDC 协议连接的应用通行许可</p>
+            <p className="mt-1 text-xs text-ink-soft">管理员分配的应用和你的 OIDC 登录授权</p>
 
             <div className="mt-3.5 flex flex-1 flex-col justify-center">
-              {!grants || grants.length === 0 ? (
+              {appsError ? (
+                <div className="text-center text-xs text-void" role="alert">
+                  外部应用加载失败：{appsError}
+                  <Button variant="ghost" size="sm" onClick={onReloadApps}>重试</Button>
+                </div>
+              ) : !apps ? (
+                <p className="text-center text-xs text-ink-soft" role="status">正在加载外部应用…</p>
+              ) : apps.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-line-strong bg-white/60 px-3.5 py-4 text-center text-xs leading-5 text-ink-soft">
                   <Icon name="apps" className="mx-auto mb-1.5 size-4 text-ink-faint" />
-                  当前还没有外部应用保持登录授权。
+                  当前没有分配的应用或登录授权。
                 </div>
               ) : (
-                <div className="divide-y divide-line/80 rounded-xl border border-line bg-white/80 px-3">
-                  {grants.slice(0, 3).map((row) => (
-                    <div key={row.clientId} className="flex items-center justify-between gap-2 py-2.5">
+                <div className="max-h-52 overflow-y-auto divide-y divide-line/80 rounded-xl border border-line bg-white/80 px-3">
+                  {apps.map(({ clientId, clientName, assigned, grant }) => (
+                    <div key={clientId} className="flex items-center justify-between gap-2 py-2.5">
                       <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="truncate text-xs font-semibold text-ink">{row.clientName}</span>
-                          {row.refresh && <Badge tone="stamp">持久</Badge>}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="truncate text-xs font-semibold text-ink" title={clientName}>{clientName}</span>
+                          {assigned && <Badge tone="plain">管理员分配</Badge>}
+                          {grant?.refresh && <Badge tone="stamp">保持登录</Badge>}
                         </div>
-                        <p className="mt-0.5 text-[0.6875rem] text-ink-soft">{row.hasActiveTokens ? "最近使用" : "授权于"} {formatDate(row.lastUsed)}</p>
+                        <p className="mt-0.5 text-[0.6875rem] text-ink-soft">
+                          {grant ? `${grant.hasActiveTokens ? "最近使用" : "授权于"} ${formatDate(grant.lastUsed)}` : "尚未授予登录授权"}
+                        </p>
                       </div>
-                      <Button variant="ghost" size="sm" className="!h-7 !px-2 text-xs hover:text-void" onClick={() => revokeApp(row)}>
-                        撤销
-                      </Button>
+                      {grant && (
+                        <Button variant="ghost" size="sm" className="!h-7 shrink-0 !px-2 text-xs hover:text-void" onClick={() => revokeApp(grant)}>
+                          撤销
+                        </Button>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -599,23 +616,39 @@ export function AccountPage() {
 
   const [sessions, setSessions] = useState<DeviceSession[] | null>(null);
   const [passkeys, setPasskeys] = useState<Passkey[] | null>(null);
-  const [grants, setGrants] = useState<Grant[] | null>(null);
+  const [apps, setApps] = useState<DashboardApp[] | null>(null);
+  const [appsError, setAppsError] = useState("");
   const [totp, setTotp] = useState<TotpEntry[] | null>(null);
 
   // User mail state
   const [mailboxes, setMailboxes] = useState<DashboardMailbox[] | null>(null);
   const [mailError, setMailError] = useState("");
 
+  const loadApps = () => {
+    setAppsError("");
+    Promise.all([api.assignedApps(), api.grants()])
+      .then(([{ apps: assignedApps }, { grants }]) => {
+        const byClient = new Map<string, DashboardApp>();
+        for (const app of assignedApps) byClient.set(app.clientId, { ...app, assigned: true });
+        for (const grant of grants) {
+          const { clientId, clientName } = grant;
+          byClient.set(clientId, { clientId, clientName, assigned: byClient.has(clientId), grant });
+        }
+        setApps([...byClient.values()]);
+      })
+      .catch((e) => setAppsError(errorMessage(e)));
+  };
+
   const loadPersonal = () => {
     api.sessions().then((r) => setSessions(r.sessions)).catch(() => {});
     api.passkeys().then((r) => setPasskeys(r.passkeys)).catch(() => {});
-    api.grants().then((r) => setGrants(r.grants)).catch(() => {});
     api.myTotp().then((r) => setTotp(r.entries)).catch(() => {});
   };
 
   useEffect(() => {
     if (!user) return;
     loadPersonal();
+    loadApps();
 
     Promise.all([
       api.myOutlookMailboxes().catch(() => ({ mailboxes: [] })),
@@ -662,8 +695,8 @@ export function AccountPage() {
       href: "/settings",
       icon: "user" as IconName,
       title: "个人资料与授权",
-      metric: grants ? grants.length : "—",
-      metricLabel: "个已授权应用",
+      metric: apps && !appsError ? apps.length : "—",
+      metricLabel: "个外部应用",
       description: "修改对外显示名称与管理 OIDC 应用授权",
     },
     {
@@ -698,7 +731,7 @@ export function AccountPage() {
   return (
     <AppShell
       title={`你好，${displayName(user)}`}
-      description="你的主权身份通行证、已授权应用与实时认证控制台。"
+      description="你的主权身份通行证、外部应用与实时认证控制台。"
     >
       <div className="space-y-6">
         {/* Tier 1: Perforated Diplomatic Pass + Authorized External Apps */}
@@ -707,8 +740,9 @@ export function AccountPage() {
           issuer={session.issuer}
           sessions={sessions}
           passkeys={passkeys}
-          grants={grants}
-          onReload={loadPersonal}
+          apps={apps}
+          appsError={appsError}
+          onReloadApps={loadApps}
         />
 
         {/* Tier 2: 4-Column Numbered Tactile Command Deck */}
