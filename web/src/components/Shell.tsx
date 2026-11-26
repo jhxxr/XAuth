@@ -66,6 +66,7 @@ function navFor(isAdmin: boolean): NavGroup[] {
           { href: "/admin/invites", label: "注册与邀请", icon: "mail" },
           { href: "/admin/apps", label: "应用", icon: "apps" },
           { href: "/admin/mail", label: "邮件中台", icon: "inbox" },
+          { href: "/admin/mail-console", label: "邮箱操作台", icon: "monitor" },
           { href: "/admin/totp", label: "共享验证器", icon: "timer" },
           { href: "/admin/settings", label: "系统设置", icon: "settings" },
         ],

@@ -25,6 +25,7 @@ import {
   UserChecklist,
 } from "../components/ui";
 import { formatDate } from "../session";
+import { Link } from "../router";
 
 type MailboxItem = {
   address: string;
@@ -112,7 +113,7 @@ function Toolbar({ children, actions }: { children: ReactNode; actions?: ReactNo
 
 export function AdminMailPage() {
   const [configured, setConfigured] = useState<boolean | null>(null);
-  const [tab, setTab] = useState<Tab>("outlook");
+  const [tab, setTab] = useState<Tab>("mailboxes");
   const [error, setError] = useState("");
 
   // Viewing inbox
@@ -126,7 +127,7 @@ export function AdminMailPage() {
   }, []);
 
   return (
-    <AppShell title="邮件中台" description={viewingInbox ? "以管理员身份查看收件箱，查看操作会记入审计日志。" : tabDescriptions[tab]}>
+    <AppShell title="邮件中台" description={viewingInbox ? "以管理员身份查看收件箱，查看操作会记入审计日志。" : tabDescriptions[tab]} actions={<Link href="/admin/mail-console" className="inline-flex items-center gap-1.5 rounded-lg text-sm font-medium text-stamp hover:underline"><Icon name="monitor" />邮箱操作台</Link>}>
       {error && (
         <div className="mb-5">
           <Notice>{error}</Notice>
@@ -138,8 +139,8 @@ export function AdminMailPage() {
           <Segmented
             label="邮件中台视图"
             options={[
-              ["outlook", "Outlook 邮箱"],
               ["mailboxes", "xmail 邮箱"],
+              ["outlook", "Outlook 邮箱"],
               ["services", "服务模板"],
               ["trash", "回收站"],
               ["settings", "邮件设置"],

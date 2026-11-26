@@ -222,6 +222,29 @@ func TestMailIntegration(t *testing.T) {
 	if r.status != http.StatusOK {
 		t.Fatalf("admin proxy get mailboxes: %d %s", r.status, r.body)
 	}
+	var adminEmail struct {
+		Email struct {
+			HTML    *string `json:"html"`
+			HasHTML bool    `json:"hasHtml"`
+		} `json:"email"`
+	}
+	r = e.api(bAdmin, http.MethodGet, "/api/admin/mail/emails/msg-alice-1", nil)
+	if r.status != http.StatusOK {
+		t.Fatalf("admin proxy get email: %d %s", r.status, r.body)
+	}
+	r.json(t, &adminEmail)
+	if adminEmail.Email.HTML == nil || !adminEmail.Email.HasHTML {
+		t.Fatalf("admin email should expose its HTML preview flag: %+v", adminEmail.Email)
+	}
+
+	r = e.api(bAdmin, http.MethodGet, "/api/admin/mail/emails/msg-bob-1", nil)
+	if r.status != http.StatusOK {
+		t.Fatalf("admin proxy get plain-text email: %d %s", r.status, r.body)
+	}
+	r.json(t, &adminEmail)
+	if adminEmail.Email.HTML != nil || adminEmail.Email.HasHTML {
+		t.Fatalf("plain-text email should not enable HTML preview: %+v", adminEmail.Email)
+	}
 
 	// Proxy security: traversal & unwhitelisted routes rejected
 	r = e.api(bAdmin, http.MethodGet, "/api/admin/mail/../other", nil)

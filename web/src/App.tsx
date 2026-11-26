@@ -10,6 +10,7 @@ const AdminInvitesPage = lazy(() => import("./pages/AdminInvites").then((page) =
 const AdminOverviewPage = lazy(() => import("./pages/AdminOverview").then((page) => ({ default: page.AdminOverviewPage })));
 const AdminSystemPage = lazy(() => import("./pages/AdminSystem").then((page) => ({ default: page.AdminSystemPage })));
 const AdminMailPage = lazy(() => import("./pages/AdminMail").then((page) => ({ default: page.AdminMailPage })));
+const AdminMailConsolePage = lazy(() => import("./pages/AdminMailConsole").then((page) => ({ default: page.AdminMailConsolePage })));
 const AdminTotpPage = lazy(() => import("./pages/AdminTotp").then((page) => ({ default: page.AdminTotpPage })));
 const EventsPage = lazy(() => import("./pages/Events").then((page) => ({ default: page.EventsPage })));
 const ForgotPasswordPage = lazy(() => import("./pages/ForgotPassword").then((page) => ({ default: page.ForgotPasswordPage })));
@@ -114,6 +115,7 @@ export function App() {
       case "/admin/settings":
       case "/admin/apps":
       case "/admin/mail":
+      case "/admin/mail-console":
       case "/admin/events":
       case "/admin/totp":
       case "/admin/keys":
@@ -130,6 +132,7 @@ export function App() {
         if (path === "/admin/settings") return <AdminSystemPage />;
         if (path === "/admin/apps") return <AppsPage />;
         if (path === "/admin/mail") return <AdminMailPage />;
+        if (path === "/admin/mail-console") return <AdminMailConsolePage />;
         if (path === "/admin/events") return <EventsPage />;
         if (path === "/admin/totp") return <AdminTotpPage />;
         return <KeysPage />;

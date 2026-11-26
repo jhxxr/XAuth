@@ -60,6 +60,9 @@ type MailViewerProps = {
   provider?: "xmail" | "outlook";
   adminMode?: boolean;
   onBack?: () => void;
+  autoRefreshSeconds?: number;
+  showCleanup?: boolean;
+  showAddress?: boolean;
 };
 
 type MailboxSummary = {
@@ -67,7 +70,7 @@ type MailboxSummary = {
   services?: { name: string; loginUrl: string; note: string | null }[];
 };
 
-export function MailViewer({ address, provider = "xmail", adminMode = false, onBack }: MailViewerProps) {
+export function MailViewer({ address, provider = "xmail", adminMode = false, onBack, autoRefreshSeconds = 0, showCleanup = true, showAddress = true }: MailViewerProps) {
   const isOutlook = provider === "outlook";
   const [emails, setEmails] = useState<EmailItem[] | null>(null);
   const [summary, setSummary] = useState<MailboxSummary | null>(null);
@@ -85,6 +88,8 @@ export function MailViewer({ address, provider = "xmail", adminMode = false, onB
   const [cleaningUp, setCleaningUp] = useState(false);
   const searchId = useId();
   const readerRef = useRef<HTMLDivElement>(null);
+  const refreshingRef = useRef(false);
+  const emailRequestRef = useRef(0);
 
   const loadSummary = async () => {
     if (isOutlook) return;
@@ -166,18 +171,35 @@ export function MailViewer({ address, provider = "xmail", adminMode = false, onB
         setCode(res && res.code ? res : null);
       }
     } catch {
-      // Non-critical
+      setCode(null);
     } finally {
       setCodeLoading(false);
     }
   };
 
   useEffect(() => {
+    emailRequestRef.current++;
     setSelectedEmail(null);
     void loadSummary();
     void loadEmails();
     void loadLatestCode();
   }, [address, provider, filterRead, filterStarred, outlookMethod]);
+
+  // Read the latest filters without restarting the timer while typing.
+  const refreshRef = useRef<() => Promise<unknown>>(() => Promise.resolve());
+  useEffect(() => {
+    refreshRef.current = () => loading || codeLoading ? Promise.resolve() : Promise.all([loadEmails(), loadLatestCode(), loadSummary()]);
+  });
+  useEffect(() => {
+    if (autoRefreshSeconds <= 0) return;
+    let disposed = false;
+    const timer = window.setInterval(() => {
+      if (disposed || document.visibilityState !== "visible" || refreshingRef.current) return;
+      refreshingRef.current = true;
+      void refreshRef.current().finally(() => { refreshingRef.current = false; });
+    }, autoRefreshSeconds * 1000);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [autoRefreshSeconds]);
 
   // On narrow layouts the reader replaces the list; bring its top into view.
   useEffect(() => {
@@ -218,6 +240,7 @@ export function MailViewer({ address, provider = "xmail", adminMode = false, onB
   };
 
   const viewEmail = async (item: EmailItem) => {
+    const request = ++emailRequestRef.current;
     setError("");
     setRefreshRequired(false);
     setSelectedEmail(null);
@@ -226,10 +249,12 @@ export function MailViewer({ address, provider = "xmail", adminMode = false, onB
         const res = adminMode
           ? await api.adminOutlookEmail(address, item.id, outlookMethod)
           : await api.myOutlookEmail(address, item.id, outlookMethod);
+        if (request !== emailRequestRef.current) return;
         setSelectedEmail(res.email);
         setEmails((prev) => prev?.map((e) => (e.id === item.id ? { ...e, isRead: true } : e)) ?? null);
       } else if (adminMode) {
         const res = await api.adminMail<{ email: EmailDetail }>("GET", `/emails/${item.id}`);
+        if (request !== emailRequestRef.current) return;
         setSelectedEmail(res.email);
         if (!item.isRead) {
           await api.adminMail("POST", `/emails/${item.id}/read`);
@@ -237,6 +262,7 @@ export function MailViewer({ address, provider = "xmail", adminMode = false, onB
         }
       } else {
         const res = await api.myEmail(item.id);
+        if (request !== emailRequestRef.current) return;
         setSelectedEmail(res.email);
         if (!item.isRead) {
           await api.markEmailRead(item.id);
@@ -244,6 +270,7 @@ export function MailViewer({ address, provider = "xmail", adminMode = false, onB
         }
       }
     } catch (err) {
+      if (request !== emailRequestRef.current) return;
       setError(errorMessage(err));
       setRefreshRequired(isOutlook && err instanceof ApiError && err.code === "outlook_stale_message");
     }
@@ -293,15 +320,15 @@ export function MailViewer({ address, provider = "xmail", adminMode = false, onB
         )}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
           <div className="flex min-w-0 flex-1 basis-64 items-center gap-3.5">
-            <IconTile name="inbox" tone="stamp" />
+            {showAddress && <IconTile name="inbox" tone="stamp" />}
             <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
+              {showAddress && <div className="flex flex-wrap items-center gap-2">
                 <p className="truncate font-mono text-[0.9375rem] font-semibold text-ink" title={address}>
                   {address}
                 </p>
                 {isOutlook && <Badge tone="stamp">Outlook</Badge>}
                 {isOutlook && usedMethod && <Badge tone="seal">{methodLabels[usedMethod] ?? usedMethod}</Badge>}
-              </div>
+              </div>}
               <div className="mt-1 flex flex-wrap items-center gap-1.5">
                 {summary?.stats ? (
                   <>
@@ -317,7 +344,7 @@ export function MailViewer({ address, provider = "xmail", adminMode = false, onB
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {adminMode && !isOutlook && (
+            {adminMode && !isOutlook && showCleanup && (
               <Button variant="ghost" size="sm" className="hover:text-void" onClick={() => void cleanupEmails()} busy={cleaningUp}>
                 {!cleaningUp && <Icon name="trash" className="size-3.5" />}
                 清理旧邮件
@@ -585,7 +612,7 @@ export function MailViewer({ address, provider = "xmail", adminMode = false, onB
                 provider={provider}
                 email={selectedEmail}
                 adminMode={adminMode}
-                onClose={() => setSelectedEmail(null)}
+                onClose={() => { emailRequestRef.current++; setSelectedEmail(null); }}
                 onDelete={
                   !isOutlook && adminMode
                     ? () => {

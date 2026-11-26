@@ -137,6 +137,7 @@ func (s *Server) handleMailProxy(w http.ResponseWriter, r *http.Request) {
 			if res.Decode(&data) == nil {
 				s.recordAdminView(r, data.Email.Mailbox, segs[1])
 			}
+			res.Data = addMailHasHTML(res.Data)
 		}
 	}
 	data := res.Data
@@ -146,6 +147,37 @@ func (s *Server) handleMailProxy(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(res.Status)
 	_, _ = w.Write(data)
+}
+
+// addMailHasHTML keeps the admin detail response compatible with the mailbox
+// viewer. XMail returns the HTML body but does not include XAuth's hasHtml
+// presentation flag, so without this the admin UI falls back to plain text.
+func addMailHasHTML(data json.RawMessage) json.RawMessage {
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(data, &response); err != nil {
+		return data
+	}
+	var email map[string]json.RawMessage
+	if err := json.Unmarshal(response["email"], &email); err != nil || email == nil {
+		return data
+	}
+
+	var html string
+	hasHTML := json.Unmarshal(email["html"], &html) == nil && strings.TrimSpace(html) != ""
+	flag, err := json.Marshal(hasHTML)
+	if err != nil {
+		return data
+	}
+	email["hasHtml"] = flag
+	response["email"], err = json.Marshal(email)
+	if err != nil {
+		return data
+	}
+	updated, err := json.Marshal(response)
+	if err != nil {
+		return data
+	}
+	return updated
 }
 
 // handleAdminMailHTML serves a message body for the admin inbox.
