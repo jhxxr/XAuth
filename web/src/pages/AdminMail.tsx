@@ -365,13 +365,13 @@ function MailboxesTab({ onOpenInbox }: { onOpenInbox: (addr: string) => void }) 
             </div>
           )}
           <div className="overflow-x-auto">
-            <table className="data-table min-w-[820px]">
+            <table className="data-table min-w-[980px]">
               <thead>
                 <tr>
                   <th scope="col" className="w-10 !pr-0">
                     <input type="checkbox" className="size-4 accent-ink align-middle" checked={allChecked} onChange={(event) => toggleSelectAll(event.target.checked)} aria-label="全选当前列表" />
                   </th>
-                  {["邮箱地址", "备注", "状态", "分配给 (XAuth 用户)", ""].map((h, i) => (
+                  {["邮箱地址", "邮箱密码", "备注", "状态", "分配给 (XAuth 用户)", ""].map((h, i) => (
                     <th key={i} scope="col">
                       {h}
                     </th>
@@ -409,6 +409,9 @@ function MailboxesTab({ onOpenInbox }: { onOpenInbox: (addr: string) => void }) 
                             {isExpired ? " 过期" : ""}
                           </p>
                         )}
+                      </td>
+                      <td>
+                        <MailboxPasswordCell address={m.address} />
                       </td>
                       <td className="text-ink-soft">
                         <p className="max-w-[14rem] truncate" title={m.note || undefined}>
@@ -511,6 +514,55 @@ function MailboxesTab({ onOpenInbox }: { onOpenInbox: (addr: string) => void }) 
           }}
         />
       )}
+    </div>
+  );
+}
+
+function MailboxPasswordCell({ address }: { address: string }) {
+  const [password, setPassword] = useState<string | null>(null);
+  const [visible, setVisible] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const toggle = async () => {
+    if (visible) {
+      setVisible(false);
+      return;
+    }
+    if (password) {
+      setVisible(true);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const result = await api.adminMail<{ password: string | null }>("GET", `/mailboxes/${encodeURIComponent(address)}/password`);
+      if (!result.password) {
+        setError("未设置密码");
+        return;
+      }
+      setPassword(result.password);
+      setVisible(true);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex min-w-[11rem] items-center gap-2">
+      {visible && password ? (
+        <>
+          <Copyable value={password} label={`${address} 的邮箱密码`} />
+          <Button variant="ghost" size="sm" onClick={() => setVisible(false)} aria-label={`隐藏 ${address} 的邮箱密码`}>隐藏</Button>
+        </>
+      ) : (
+        <Button variant="secondary" size="sm" busy={loading} onClick={() => void toggle()} aria-label={`查看 ${address} 的邮箱密码`}>
+          查看密码
+        </Button>
+      )}
+      {error && <span role="status" className="text-xs text-ink-soft">{error}</span>}
     </div>
   );
 }
